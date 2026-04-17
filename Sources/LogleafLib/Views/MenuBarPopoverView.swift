@@ -3,6 +3,7 @@ import AppKit
 
 public struct MenuBarPopoverView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openWindow) private var openWindow
 
     public init() {}
 
@@ -120,16 +121,54 @@ public struct MenuBarPopoverView: View {
     }
 
     private func openMainWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
-            window.makeKeyAndOrderFront(nil)
-        } else {
-            NSApp.sendAction(Selector(("showMainWindow:")), to: nil, from: nil)
-        }
+        openWindow(id: "main")
+        activateAndFocusMainWindow(after: 0)
+        activateAndFocusMainWindow(after: 0.15)
     }
 
     private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
+
+    private func activateAndFocusMainWindow(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            NSApp.activate(ignoringOtherApps: true)
+            guard let mainWindow = resolveMainWindow() else { return }
+            mainWindow.orderFrontRegardless()
+            mainWindow.makeMain()
+            mainWindow.makeKeyAndOrderFront(nil)
+            dismissMenuBarPopoverWindows(except: mainWindow)
+            if let firstResponder = mainWindow.initialFirstResponder {
+                mainWindow.makeFirstResponder(firstResponder)
+            } else if let contentView = mainWindow.contentView {
+                mainWindow.makeFirstResponder(contentView)
+            }
+        }
+    }
+
+    private func resolveMainWindow() -> NSWindow? {
+        let candidates = NSApp.windows.filter { window in
+            guard window.canBecomeKey else { return false }
+            let matchesID = window.identifier?.rawValue == "main"
+            let matchesTitle = window.title == "Logleaf"
+            let looksLikeMainSize = window.frame.width >= 500
+            return (matchesID || matchesTitle) && looksLikeMainSize
+        }
+        if let visible = candidates.first(where: \.isVisible) {
+            return visible
+        }
+        return candidates.max(by: { lhs, rhs in
+            lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height
+        })
+    }
+
+    private func dismissMenuBarPopoverWindows(except mainWindow: NSWindow) {
+        for window in NSApp.windows where window != mainWindow {
+            let className = String(describing: type(of: window))
+            if className.contains("NSStatusBarWindow") {
+                window.orderOut(nil)
+            }
+        }
     }
 }
