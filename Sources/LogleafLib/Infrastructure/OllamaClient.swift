@@ -1,9 +1,16 @@
 import Foundation
 
+public protocol OllamaClientProtocol: AnyObject {
+    func configure(host: String, model: String)
+    func testConnection() async throws -> Bool
+    func listModels() async throws -> [String]
+    func generate(prompt: String, imageBase64: String) async throws -> String
+}
+
 public final class OllamaClient {
     private let session = URLSession.shared
     private var baseURL: String = "http://localhost:11434"
-    private var model: String = "llava"
+    private var model: String = "gemma4:e4b"
 
     var configuredHost: String { baseURL }
     var configuredModel: String { model }
@@ -88,6 +95,8 @@ public final class OllamaClient {
         return url
     }
 }
+
+extension OllamaClient: OllamaClientProtocol {}
 
 public enum OllamaError: Error, LocalizedError {
     case connectionFailed

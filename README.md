@@ -35,14 +35,14 @@ Logleaf は、macOS 上で定期スクリーンショットを取得し、ロー
 ## Ollama 前提
 
 - 接続先のデフォルトは `http://localhost:11434`
-- モデル設定のデフォルトは `llava`
+- モデル設定のデフォルトは `gemma4:e4b`
 - 初回セットアップ中の接続テストでは、起動中の Ollama から利用可能モデル一覧を取得します
 - 利用したいモデルが一覧に出ない場合は、事前に Ollama 側で取得しておく必要があります
 
 例:
 
 ```bash
-ollama pull llava
+ollama pull gemma4:e4b
 ollama list
 ```
 
@@ -54,7 +54,7 @@ ollama list
    最低限、セットアップで選択するモデルがローカルに存在している必要があります
 
 ```bash
-ollama pull llava
+ollama pull gemma4:e4b
 ```
 
 3. パッケージをビルドする
@@ -87,7 +87,7 @@ swift run Logleaf
 - キャプチャ間隔: 60秒
 - チェックポイント間隔: 5分
 - Ollama ホスト: `http://localhost:11434`
-- Ollama モデル: `llava`
+- Ollama モデル: `gemma4:e4b`
 - 保存期間: 30日
 - 自動削除: 有効
 

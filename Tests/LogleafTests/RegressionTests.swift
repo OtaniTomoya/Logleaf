@@ -44,17 +44,17 @@ final class RegressionTests: XCTestCase {
             SessionObservation(workSessionId: protectedSession.id, observationId: protectedObservation.id)
         )
 
-        let draftSession = WorkSession(
+        let autoConfirmedSession = WorkSession(
             startAt: rebuiltObservation1.capturedAt,
             endAt: rebuiltObservation2.capturedAt,
             aiTitle: "Draft"
         )
-        try env.workSessionRepository.save(draftSession)
+        try env.workSessionRepository.save(autoConfirmedSession)
         try env.workSessionRepository.saveSessionObservation(
-            SessionObservation(workSessionId: draftSession.id, observationId: rebuiltObservation1.id)
+            SessionObservation(workSessionId: autoConfirmedSession.id, observationId: rebuiltObservation1.id)
         )
         try env.workSessionRepository.saveSessionObservation(
-            SessionObservation(workSessionId: draftSession.id, observationId: rebuiltObservation2.id)
+            SessionObservation(workSessionId: autoConfirmedSession.id, observationId: rebuiltObservation2.id)
         )
 
         let sessions = try env.aggregationService.buildSessions(for: baseDate)
@@ -63,7 +63,7 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(sessions.count, 2)
         XCTAssertEqual(storedSessions.count, 2)
         XCTAssertEqual(try env.workSessionRepository.fetch(id: protectedSession.id)?.finalTitle, "Manual title")
-        XCTAssertNil(try env.workSessionRepository.fetch(id: draftSession.id))
+        XCTAssertNil(try env.workSessionRepository.fetch(id: autoConfirmedSession.id))
 
         let rebuiltSession = try XCTUnwrap(storedSessions.first { $0.id != protectedSession.id })
         let rebuiltObservationIds = try env.workSessionRepository.fetchObservationIds(sessionId: rebuiltSession.id)
@@ -222,6 +222,94 @@ final class RegressionTests: XCTestCase {
         let settings = try env.settingsService.loadSettings()
 
         XCTAssertTrue(settings.autoDeleteEnabled)
+    }
+
+    func testInferDeletesScreenshotAndClearsImagePathOnSuccess() async throws {
+        let env = TestEnvironment()
+        let now = Date()
+        let imageURL = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: imageURL)
+        let tag = Tag(name: "開発")
+        try env.tagRepository.save(tag)
+
+        let job = CaptureJob(scheduledAt: now, executedAt: now, status: .succeeded)
+        try env.captureJobRepository.save(job)
+        let observation = Observation(
+            captureJobId: job.id,
+            capturedAt: now,
+            imagePath: imageURL.path,
+            captureState: .captured
+        )
+        try env.observationRepository.save(observation)
+
+        let mockClient = MockOllamaClient(
+            generatedText: """
+            {
+              "activity_summary": "コードを書いている",
+              "predicted_tags": ["開発"],
+              "confidence": 0.9,
+              "reason": "IDEが見えるため",
+              "sensitivity_flag": "none"
+            }
+            """
+        )
+        let inferenceService = InferenceService(
+            ollamaClient: mockClient,
+            promptBuilder: PromptBuilder(),
+            observationRepository: env.observationRepository,
+            tagRepository: env.tagRepository,
+            fileStorageService: env.fileStorageService
+        )
+
+        await inferenceService.infer(
+            observationId: observation.id,
+            imageURL: imageURL,
+            frontmostApp: "Xcode",
+            frontmostWindowTitle: "Test"
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: imageURL.path))
+        let refreshed = try XCTUnwrap(env.observationRepository.fetch(id: observation.id))
+        XCTAssertNil(refreshed.imagePath)
+    }
+
+    func testInferKeepsScreenshotAndImagePathOnFailure() async throws {
+        let env = TestEnvironment()
+        let now = Date()
+        let imageURL = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: imageURL)
+        let tag = Tag(name: "開発")
+        try env.tagRepository.save(tag)
+
+        let job = CaptureJob(scheduledAt: now, executedAt: now, status: .succeeded)
+        try env.captureJobRepository.save(job)
+        let observation = Observation(
+            captureJobId: job.id,
+            capturedAt: now,
+            imagePath: imageURL.path,
+            captureState: .captured
+        )
+        try env.observationRepository.save(observation)
+
+        let mockClient = MockOllamaClient(generatedText: nil)
+        let inferenceService = InferenceService(
+            ollamaClient: mockClient,
+            promptBuilder: PromptBuilder(),
+            observationRepository: env.observationRepository,
+            tagRepository: env.tagRepository,
+            fileStorageService: env.fileStorageService
+        )
+
+        await inferenceService.infer(
+            observationId: observation.id,
+            imageURL: imageURL,
+            frontmostApp: "Xcode",
+            frontmostWindowTitle: "Test"
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imageURL.path))
+        let refreshed = try XCTUnwrap(env.observationRepository.fetch(id: observation.id))
+        XCTAssertEqual(refreshed.imagePath, imageURL.path)
     }
 
     @MainActor
@@ -419,7 +507,8 @@ private final class TestEnvironment {
             ollamaClient: OllamaClient(),
             promptBuilder: PromptBuilder(),
             observationRepository: observationRepository,
-            tagRepository: tagRepository
+            tagRepository: tagRepository,
+            fileStorageService: fileStorageService
         )
         captureService = CaptureService(
             captureJobRepository: captureJobRepository,
@@ -504,5 +593,30 @@ private func waitForExportCompletion(_ viewModel: ExportViewModel, timeout: Time
 private extension Array {
     var onlyElement: Element? {
         count == 1 ? first : nil
+    }
+}
+
+private final class MockOllamaClient: OllamaClientProtocol {
+    private let generatedText: String?
+
+    init(generatedText: String?) {
+        self.generatedText = generatedText
+    }
+
+    func configure(host: String, model: String) {}
+
+    func testConnection() async throws -> Bool {
+        true
+    }
+
+    func listModels() async throws -> [String] {
+        []
+    }
+
+    func generate(prompt: String, imageBase64: String) async throws -> String {
+        guard let generatedText else {
+            throw OllamaError.requestFailed
+        }
+        return generatedText
     }
 }

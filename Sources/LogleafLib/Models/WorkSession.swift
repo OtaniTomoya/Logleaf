@@ -42,7 +42,7 @@ public struct WorkSession: Codable, Identifiable, FetchableRecord, PersistableRe
     public init(id: String = UUID().uuidString, startAt: Date, endAt: Date,
          aiTitle: String? = nil, finalTitle: String? = nil,
          aiSummary: String? = nil, finalNote: String? = nil,
-         aiConfidence: Double? = nil, status: Status = .draft,
+         aiConfidence: Double? = nil, status: Status = .confirmed,
          representativeImagePath: String? = nil,
          createdAt: Date = Date(), updatedAt: Date = Date()) {
         self.id = id

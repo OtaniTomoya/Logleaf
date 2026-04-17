@@ -75,7 +75,8 @@ public final class AppState: ObservableObject {
             ollamaClient: ollamaClient,
             promptBuilder: promptBuilder,
             observationRepository: observationRepo,
-            tagRepository: tagRepo
+            tagRepository: tagRepo,
+            fileStorageService: fileStorage
         )
 
         self.captureService = CaptureService(

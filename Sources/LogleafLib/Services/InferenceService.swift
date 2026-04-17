@@ -2,19 +2,22 @@ import Foundation
 import AppKit
 
 public final class InferenceService {
-    private let ollamaClient: OllamaClient
+    private let ollamaClient: OllamaClientProtocol
     private let promptBuilder: PromptBuilder
     private let observationRepository: ObservationRepository
     private let tagRepository: TagRepository
+    private let fileStorageService: FileStorageService
 
-    public init(ollamaClient: OllamaClient,
+    public init(ollamaClient: OllamaClientProtocol,
          promptBuilder: PromptBuilder,
          observationRepository: ObservationRepository,
-         tagRepository: TagRepository) {
+         tagRepository: TagRepository,
+         fileStorageService: FileStorageService) {
         self.ollamaClient = ollamaClient
         self.promptBuilder = promptBuilder
         self.observationRepository = observationRepository
         self.tagRepository = tagRepository
+        self.fileStorageService = fileStorageService
     }
 
     public func configure(host: String, model: String) {
@@ -67,10 +70,20 @@ public final class InferenceService {
                 }
             }
             try observationRepository.saveTags(tags)
+            deleteScreenshotAfterInference(observationId: observationId, imageURL: imageURL)
 
             AppLogger.info("Inference complete for \(observationId): \(result.activitySummary)")
         } catch {
             AppLogger.error("Inference failed for \(observationId): \(error)")
+        }
+    }
+
+    private func deleteScreenshotAfterInference(observationId: String, imageURL: URL) {
+        do {
+            try fileStorageService.deleteFile(at: imageURL)
+            try observationRepository.clearImageReference(observationId: observationId)
+        } catch {
+            AppLogger.error("Failed to delete screenshot after inference for \(observationId): \(error)")
         }
     }
 

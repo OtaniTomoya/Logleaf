@@ -86,6 +86,16 @@ public final class ObservationRepository {
         }
     }
 
+    public func clearImageReference(observationId: String) throws {
+        try databaseManager.writer.write { db in
+            if var obs = try Observation.fetchOne(db, key: observationId) {
+                obs.imagePath = nil
+                obs.imageSha256 = nil
+                try obs.update(db)
+            }
+        }
+    }
+
     public func countByDate(_ date: Date) throws -> Int {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: date)
