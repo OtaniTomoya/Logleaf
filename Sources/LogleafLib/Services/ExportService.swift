@@ -1,6 +1,6 @@
 import Foundation
 
-public final class ExportService {
+public final class ExportService: @unchecked Sendable {
     private let workSessionRepository: WorkSessionRepository
     private let observationRepository: ObservationRepository
     private let tagRepository: TagRepository

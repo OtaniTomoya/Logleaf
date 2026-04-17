@@ -10,7 +10,7 @@ public struct ExportRecord: Codable, Identifiable, FetchableRecord, PersistableR
     public var requestedAt: Date
     public var filterJson: String?
 
-    public enum ExportFormat: String, Codable {
+    public enum ExportFormat: String, Codable, Sendable {
         case csv
         case markdown
         case json
@@ -26,7 +26,7 @@ public struct ExportRecord: Codable, Identifiable, FetchableRecord, PersistableR
     }
 }
 
-public struct ExportFilter: Codable {
+public struct ExportFilter: Codable, Sendable {
     public var startDate: Date?
     public var endDate: Date?
     public var tagIds: [String]?

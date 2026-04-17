@@ -96,6 +96,72 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(Set(mergedTags.map(\.source)), Set([.ai, .user]))
     }
 
+    func testMergeSessionsAveragesConfidenceUsingOnlyNonNilValues() throws {
+        let env = TestEnvironment()
+        let baseDate = makeDate(year: 2026, month: 4, day: 18, hour: 10, minute: 30)
+
+        let session1 = WorkSession(
+            startAt: baseDate,
+            endAt: baseDate.addingTimeInterval(300),
+            aiTitle: "A",
+            aiConfidence: nil
+        )
+        let session2 = WorkSession(
+            startAt: baseDate.addingTimeInterval(360),
+            endAt: baseDate.addingTimeInterval(660),
+            aiTitle: "B",
+            aiConfidence: 0.8
+        )
+        try env.workSessionRepository.save(session1)
+        try env.workSessionRepository.save(session2)
+
+        try env.aggregationService.mergeSessions(sessionIds: [session1.id, session2.id])
+
+        let mergedSession = try XCTUnwrap(try env.workSessionRepository.fetchForDate(baseDate).onlyElement)
+        XCTAssertEqual(try XCTUnwrap(mergedSession.aiConfidence), 0.8, accuracy: 0.000_1)
+    }
+
+    func testSplitSessionSortsObservationsByCapturedAtBeforeBuildingSessions() throws {
+        let env = TestEnvironment()
+        let t0 = makeDate(year: 2026, month: 4, day: 18, hour: 9, minute: 0)
+        let t1 = makeDate(year: 2026, month: 4, day: 18, hour: 9, minute: 10)
+        let t2 = makeDate(year: 2026, month: 4, day: 18, hour: 9, minute: 20)
+
+        let obs0 = try env.makeObservation(at: t0)
+        let obs1 = try env.makeObservation(at: t1)
+        let obs2 = try env.makeObservation(at: t2)
+
+        let session = WorkSession(startAt: t0, endAt: t2, aiTitle: "Split")
+        try env.workSessionRepository.save(session)
+
+        // Intentionally save links out of time order.
+        try env.workSessionRepository.saveSessionObservation(
+            SessionObservation(workSessionId: session.id, observationId: obs1.id)
+        )
+        try env.workSessionRepository.saveSessionObservation(
+            SessionObservation(workSessionId: session.id, observationId: obs0.id)
+        )
+        try env.workSessionRepository.saveSessionObservation(
+            SessionObservation(workSessionId: session.id, observationId: obs2.id)
+        )
+
+        try env.aggregationService.splitSession(
+            sessionId: session.id,
+            at: makeDate(year: 2026, month: 4, day: 18, hour: 9, minute: 15)
+        )
+
+        let splitSessions = try env.workSessionRepository.fetchForDate(t0)
+        XCTAssertEqual(splitSessions.count, 2)
+
+        let before = try XCTUnwrap(splitSessions.first(where: { $0.endAt <= t1 }))
+        let after = try XCTUnwrap(splitSessions.first(where: { $0.startAt >= t2 }))
+
+        XCTAssertEqual(before.startAt, t0)
+        XCTAssertEqual(before.endAt, t1)
+        XCTAssertEqual(after.startAt, t2)
+        XCTAssertEqual(after.endAt, t2)
+    }
+
     func testExportExcludesUnclassifiedWhenFlagIsDisabled() throws {
         let env = TestEnvironment()
         let date = makeDate(year: 2026, month: 4, day: 18, hour: 11, minute: 0)
@@ -223,6 +289,36 @@ final class RegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testSchedulerDoesNotResumeIfManuallyStoppedDuringInterruption() {
+        let env = TestEnvironment()
+        env.schedulerService.start(intervalSeconds: 120)
+
+        env.schedulerService.pauseForSystemInterruption()
+        XCTAssertFalse(env.schedulerService.isRunning)
+
+        env.schedulerService.stop()
+        env.schedulerService.resumeAfterSystemInterruptionIfNeeded()
+
+        XCTAssertFalse(env.schedulerService.isRunning)
+    }
+
+    @MainActor
+    func testSetupViewModelSaveSettingsDoesNotCompleteSetupFlag() throws {
+        let env = TestEnvironment()
+        let viewModel = SetupViewModel(
+            permissionService: PermissionService(),
+            inferenceService: env.inferenceService,
+            tagService: TagService(tagRepository: env.tagRepository),
+            settingsService: env.settingsService
+        )
+        viewModel.selectedModel = "llava:test"
+        viewModel.retentionDays = 14
+
+        XCTAssertTrue(viewModel.saveSettings())
+        XCTAssertFalse(try env.settingsService.loadBool(forKey: "setup_complete"))
+    }
+
+    @MainActor
     func testSummaryReloadDoesNotAccumulateUnclassifiedMinutes() throws {
         let env = TestEnvironment()
         let baseDate = makeDate(year: 2026, month: 4, day: 18, hour: 13, minute: 0)
@@ -247,7 +343,7 @@ final class RegressionTests: XCTestCase {
     }
 
     @MainActor
-    func testExportViewModelNormalizesDateOnlyRangeToWholeDays() throws {
+    func testExportViewModelNormalizesDateOnlyRangeToWholeDays() async throws {
         let env = TestEnvironment()
         let firstDay = makeLocalDate(year: 2026, month: 4, day: 11, hour: 9, minute: 0)
         let lastDay = makeLocalDate(year: 2026, month: 4, day: 18, hour: 20, minute: 0)
@@ -274,6 +370,8 @@ final class RegressionTests: XCTestCase {
         viewModel.endDate = makeLocalDate(year: 2026, month: 4, day: 18, hour: 15, minute: 30)
 
         viewModel.export()
+        await waitForExportCompletion(viewModel)
+        XCTAssertFalse(viewModel.isExporting)
 
         let exportedURL = try XCTUnwrap(viewModel.exportedURL)
         XCTAssertEqual(
@@ -393,6 +491,14 @@ private func loadExportedSessionIDs(from url: URL) throws -> [String] {
     let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
     let sessions = json?["sessions"] as? [[String: Any]] ?? []
     return sessions.compactMap { $0["id"] as? String }
+}
+
+@MainActor
+private func waitForExportCompletion(_ viewModel: ExportViewModel, timeout: TimeInterval = 3.0) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while viewModel.isExporting && Date() < deadline {
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
 }
 
 private extension Array {

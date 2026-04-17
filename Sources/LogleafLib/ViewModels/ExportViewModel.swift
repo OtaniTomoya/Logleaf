@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 @MainActor
 public final class ExportViewModel: ObservableObject {
@@ -14,10 +15,14 @@ public final class ExportViewModel: ObservableObject {
 
     private let exportService: ExportService
     private let tagRepository: TagRepository
+    private let exportQueue: OperationQueue
 
     public init(exportService: ExportService, tagRepository: TagRepository) {
         self.exportService = exportService
         self.tagRepository = tagRepository
+        self.exportQueue = OperationQueue()
+        self.exportQueue.qualityOfService = .userInitiated
+        self.exportQueue.maxConcurrentOperationCount = 1
     }
 
     public func loadTags() {
@@ -29,6 +34,7 @@ public final class ExportViewModel: ObservableObject {
     }
 
     public func export() {
+        guard !isExporting else { return }
         isExporting = true
         errorMessage = nil
         exportedURL = nil
@@ -42,19 +48,31 @@ public final class ExportViewModel: ObservableObject {
             tagIds: selectedTagIds.isEmpty ? nil : Array(selectedTagIds),
             includeUnclassified: includeUnclassified
         )
+        let format = selectedFormat
+        let exportService = self.exportService
 
-        do {
-            switch selectedFormat {
-            case .csv:
-                exportedURL = try exportService.exportCSV(filter: filter)
-            case .markdown:
-                exportedURL = try exportService.exportMarkdown(filter: filter)
-            case .json:
-                exportedURL = try exportService.exportJSON(filter: filter)
+        exportQueue.addOperation {
+            let result: Result<URL, Error> = Result {
+                switch format {
+                case .csv:
+                    return try exportService.exportCSV(filter: filter)
+                case .markdown:
+                    return try exportService.exportMarkdown(filter: filter)
+                case .json:
+                    return try exportService.exportJSON(filter: filter)
+                }
             }
-        } catch {
-            errorMessage = "エクスポートに失敗しました: \(error.localizedDescription)"
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success(let url):
+                    exportedURL = url
+                case .failure(let error):
+                    errorMessage = "エクスポートに失敗しました: \(error.localizedDescription)"
+                }
+                isExporting = false
+            }
         }
-        isExporting = false
     }
 }

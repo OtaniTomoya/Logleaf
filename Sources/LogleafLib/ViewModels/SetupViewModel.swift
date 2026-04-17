@@ -87,16 +87,19 @@ public final class SetupViewModel: ObservableObject {
         tags.remove(atOffsets: offsets)
     }
 
-    public func saveSettings() {
+    @discardableResult
+    public func saveSettings() -> Bool {
         do {
             var settings = try settingsService.loadSettings()
             settings.ollamaModel = selectedModel
             settings.retentionDays = retentionDays
             try settingsService.saveSettings(settings)
             inferenceService.configure(host: settings.ollamaHost, model: settings.ollamaModel)
-            try settingsService.saveBool(true, forKey: "setup_complete")
+            errorMessage = nil
+            return true
         } catch {
             errorMessage = "設定の保存に失敗しました"
+            return false
         }
     }
 

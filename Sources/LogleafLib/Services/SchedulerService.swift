@@ -15,7 +15,7 @@ public final class SchedulerService {
     public func start(intervalSeconds: TimeInterval = 60) {
         self.intervalSeconds = intervalSeconds
         shouldResumeAfterInterruption = false
-        stop()
+        stop(clearResumeFlag: false)
         timer = Timer.scheduledTimer(withTimeInterval: intervalSeconds, repeats: true) { [weak self] _ in
             Task { [weak self] in
                 await self?.captureService.captureOnce()
@@ -25,8 +25,15 @@ public final class SchedulerService {
     }
 
     public func stop() {
+        stop(clearResumeFlag: true)
+    }
+
+    private func stop(clearResumeFlag: Bool) {
         timer?.invalidate()
         timer = nil
+        if clearResumeFlag {
+            shouldResumeAfterInterruption = false
+        }
         AppLogger.info("Scheduler stopped")
     }
 
@@ -95,11 +102,12 @@ public final class SchedulerService {
 
     func pauseForSystemInterruption() {
         shouldResumeAfterInterruption = isRunning
-        stop()
+        stop(clearResumeFlag: false)
     }
 
     func resumeAfterSystemInterruptionIfNeeded() {
         guard shouldResumeAfterInterruption else { return }
+        shouldResumeAfterInterruption = false
         start(intervalSeconds: intervalSeconds)
     }
 

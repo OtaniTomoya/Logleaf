@@ -60,8 +60,9 @@ public struct SetupView: View {
                 Spacer()
                 if viewModel.currentStep == .complete {
                     Button("開始する") {
-                        viewModel.saveSettings()
-                        appState.completeSetup()
+                        if viewModel.saveSettings() {
+                            appState.completeSetup()
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                 } else {

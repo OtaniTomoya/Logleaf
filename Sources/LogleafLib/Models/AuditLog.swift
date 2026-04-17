@@ -13,27 +13,8 @@ public struct AuditLog: Codable, Identifiable, FetchableRecord, PersistableRecor
     public enum EventType: String, Codable {
         case capture
         case inference
-        case export_
+        case export_ = "export"
         case settings
-
-        public var rawValue: String {
-            switch self {
-            case .capture: return "capture"
-            case .inference: return "inference"
-            case .export_: return "export"
-            case .settings: return "settings"
-            }
-        }
-
-        public init?(rawValue: String) {
-            switch rawValue {
-            case "capture": self = .capture
-            case "inference": self = .inference
-            case "export": self = .export_
-            case "settings": self = .settings
-            default: return nil
-            }
-        }
     }
 
     public init(id: String = UUID().uuidString, eventType: EventType,

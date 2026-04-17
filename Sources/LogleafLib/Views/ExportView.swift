@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct ExportView: View {
     @StateObject var viewModel: ExportViewModel

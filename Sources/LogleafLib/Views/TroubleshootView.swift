@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct TroubleshootView: View {
     @EnvironmentObject var appState: AppState

@@ -187,11 +187,15 @@ public final class AggregationService {
         let observationIds = try sorted.flatMap { try workSessionRepository.fetchObservationIds(sessionId: $0.id) }
         let observations = try observationIds.compactMap { try observationRepository.fetch(id: $0) }
         let carriedTags = try uniqueMergedTags(from: sorted)
+        let confidenceValues = sorted.compactMap(\.aiConfidence)
+        let mergedConfidence = confidenceValues.isEmpty
+            ? nil
+            : confidenceValues.reduce(0, +) / Double(confidenceValues.count)
         let merged = WorkSession(
             startAt: sorted.first!.startAt,
             endAt: sorted.last!.endAt,
             aiTitle: sorted.first!.displayTitle,
-            aiConfidence: sorted.compactMap(\.aiConfidence).reduce(0, +) / Double(sorted.count),
+            aiConfidence: mergedConfidence,
             status: .draft
         )
         try workSessionRepository.save(merged)
@@ -222,7 +226,9 @@ public final class AggregationService {
     public func splitSession(sessionId: String, at splitTime: Date) throws {
         guard try workSessionRepository.fetch(id: sessionId) != nil else { return }
         let obsIds = try workSessionRepository.fetchObservationIds(sessionId: sessionId)
-        let observations = try obsIds.compactMap { try observationRepository.fetch(id: $0) }
+        let observations = try obsIds
+            .compactMap { try observationRepository.fetch(id: $0) }
+            .sorted(by: { $0.capturedAt < $1.capturedAt })
 
         let before = observations.filter { $0.capturedAt < splitTime }
         let after = observations.filter { $0.capturedAt >= splitTime }

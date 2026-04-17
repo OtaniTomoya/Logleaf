@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct SessionDetailView: View {
     @StateObject var viewModel: SessionDetailViewModel

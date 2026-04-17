@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct TagManagementView: View {
     @StateObject var viewModel: TagManagementViewModel

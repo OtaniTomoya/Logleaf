@@ -94,10 +94,17 @@ public final class WorkSessionRepository {
 
     public func fetchObservationIds(sessionId: String) throws -> [String] {
         try databaseManager.reader.read { db in
-            try SessionObservation
-                .filter(Column("workSessionId") == sessionId)
-                .fetchAll(db)
-                .map(\.observationId)
+            try String.fetchAll(
+                db,
+                sql: """
+                SELECT so.observationId
+                FROM session_observations AS so
+                JOIN observations AS o ON o.id = so.observationId
+                WHERE so.workSessionId = ?
+                ORDER BY o.capturedAt ASC
+                """,
+                arguments: [sessionId]
+            )
         }
     }
 

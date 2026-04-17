@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct WeeklyMonthlySummaryView: View {
     @StateObject var viewModel: SummaryViewModel

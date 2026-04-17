@@ -190,10 +190,19 @@ public final class CaptureService {
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
             var value: AnyObject?
             let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &value)
-            if result == .success {
+            if result == .success,
+               let focusedWindowValue = value,
+               CFGetTypeID(focusedWindowValue) == AXUIElementGetTypeID() {
+                let focusedWindow = unsafeBitCast(focusedWindowValue, to: AXUIElement.self)
                 var titleValue: AnyObject?
-                AXUIElementCopyAttributeValue(value as! AXUIElement, kAXTitleAttribute as CFString, &titleValue)
-                windowTitle = titleValue as? String
+                let titleResult = AXUIElementCopyAttributeValue(
+                    focusedWindow,
+                    kAXTitleAttribute as CFString,
+                    &titleValue
+                )
+                if titleResult == .success {
+                    windowTitle = titleValue as? String
+                }
             }
         }
 
