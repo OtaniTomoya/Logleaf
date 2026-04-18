@@ -9,9 +9,16 @@ public final class AppState: ObservableObject {
     @Published public var captureStatus: CaptureStatus = .idle
     @Published public var todayRecordedMinutes: Int = 0
     @Published public var latestActivity: String = ""
-    @Published public var unconfirmedCount: Int = 0
     @Published public var nextCaptureDate: Date?
     @Published public var selectedDate: Date = Date()
+    @Published public var pendingInferenceCount: Int = 0
+    @Published public var completedInferenceCount: Int = 0
+    @Published public var currentInferenceProcessedCount: Int = 0
+    @Published public var currentInferenceTotalCount: Int = 0
+    @Published public var shouldOpenSettings: Bool = false
+    @Published public var inferenceJustCompleted: Bool = false
+    private var isRunningPendingInference: Bool = false
+    private let inferredScreenshotRetention: TimeInterval = 24 * 60 * 60
 
     // MARK: - Services
     public let databaseManager: DatabaseManager
@@ -22,7 +29,6 @@ public final class AppState: ObservableObject {
     public let observationRepository: ObservationRepository
     public let checkpointRepository: CheckpointRepository
     public let workSessionRepository: WorkSessionRepository
-    public let exportRepository: ExportRepository
     public let auditLogRepository: AuditLogRepository
 
     public let fileStorageService: FileStorageService
@@ -32,9 +38,10 @@ public final class AppState: ObservableObject {
     public let inferenceService: InferenceService
     public let aggregationService: AggregationService
     public let tagService: TagService
-    public let exportService: ExportService
     public let settingsService: SettingsService
     public let schedulerService: SchedulerService
+    public let dailyFeedbackService: DailyFeedbackService
+    public let dailyFeedbackRepository: DailyFeedbackRepository
 
     public init(
         fileStorageService: FileStorageService = FileStorageService(),
@@ -60,8 +67,6 @@ public final class AppState: ObservableObject {
         self.checkpointRepository = checkpointRepo
         let workSessionRepo = WorkSessionRepository(databaseManager: dbManager)
         self.workSessionRepository = workSessionRepo
-        let exportRepo = ExportRepository(databaseManager: dbManager)
-        self.exportRepository = exportRepo
         let auditLogRepo = AuditLogRepository(databaseManager: dbManager)
         self.auditLogRepository = auditLogRepo
 
@@ -82,8 +87,7 @@ public final class AppState: ObservableObject {
             captureJobRepository: captureJobRepo,
             observationRepository: observationRepo,
             exclusionService: self.exclusionService,
-            fileStorageService: fileStorage,
-            inferenceService: self.inferenceService
+            fileStorageService: fileStorage
         )
 
         self.aggregationService = AggregationService(
@@ -93,12 +97,14 @@ public final class AppState: ObservableObject {
             fileStorageService: fileStorage
         )
 
-        self.exportService = ExportService(
+        let dailyFeedbackRepo = DailyFeedbackRepository(databaseManager: dbManager)
+        self.dailyFeedbackRepository = dailyFeedbackRepo
+        self.dailyFeedbackService = DailyFeedbackService(
+            ollamaClient: ollamaClient,
+            promptBuilder: promptBuilder,
             workSessionRepository: workSessionRepo,
-            observationRepository: observationRepo,
             tagRepository: tagRepo,
-            exportRepository: exportRepo,
-            fileStorageService: fileStorage
+            dailyFeedbackRepository: dailyFeedbackRepo
         )
 
         self.schedulerService = SchedulerService(captureService: captureService)
@@ -107,7 +113,10 @@ public final class AppState: ObservableObject {
     }
 
     private func loadInitialState() {
-        applyRuntimeSettings()
+        let settings = (try? settingsService.loadSettings()) ?? AppSettings()
+        inferenceService.configure(host: settings.ollamaHost, model: settings.ollamaModel)
+        cleanupOldInferredScreenshots()
+        refreshInferenceQueueStats()
         do {
             let setupDone = try settingsService.loadBool(forKey: "setup_complete")
             isSetupComplete = setupDone
@@ -149,9 +158,115 @@ public final class AppState: ObservableObject {
     }
 
     public func captureNow() async {
-        captureStatus = .capturing
+        let wasInferring = isRunningPendingInference
+        if !wasInferring {
+            captureStatus = .capturing
+        }
         await captureService.captureOnce()
-        captureStatus = isCapturing ? .capturing : .idle
+        if !wasInferring {
+            captureStatus = isCapturing ? .capturing : .idle
+        }
+        refreshInferenceQueueStats()
+    }
+
+    public func runPendingInference() async {
+        guard !isRunningPendingInference else { return }
+        isRunningPendingInference = true
+        defer {
+            isRunningPendingInference = false
+            if captureStatus == .inferring {
+                captureStatus = isCapturing ? .capturing : .idle
+            }
+        }
+
+        applyRuntimeSettings()
+
+        let pendingObservations = (try? observationRepository.fetchPendingInferenceObservations()) ?? []
+        currentInferenceProcessedCount = 0
+        currentInferenceTotalCount = pendingObservations.count
+
+        guard !pendingObservations.isEmpty else {
+            refreshInferenceQueueStats()
+            return
+        }
+
+        captureStatus = .inferring
+        await inferenceService.inferPendingObservations(pendingObservations) { [weak self] processed, total in
+            Task { @MainActor [weak self] in
+                self?.currentInferenceProcessedCount = processed
+                self?.currentInferenceTotalCount = total
+                self?.refreshInferenceQueueStats()
+            }
+        }
+        // 推論完了後にセッションを自動再構築（UIブロック回避のためバックグラウンドで実行）
+        let calendar = Calendar.current
+        let affectedDates = Set(pendingObservations.map { calendar.startOfDay(for: $0.capturedAt) }).sorted()
+        let aggregationService = self.aggregationService
+        do {
+            try await Task.detached(priority: .utility) {
+                for day in affectedDates {
+                    try aggregationService.buildCheckpoints(for: day)
+                    _ = try aggregationService.buildSessions(for: day)
+                }
+            }.value
+        } catch {
+            AppLogger.error("Failed to rebuild sessions after inference: \(error)")
+        }
+
+        refreshInferenceQueueStats()
+        inferenceJustCompleted = true
+        cleanupOldInferredScreenshots()
+    }
+
+    public func refreshInferenceQueueStats() {
+        pendingInferenceCount = (try? observationRepository.countPendingInference()) ?? 0
+        completedInferenceCount = (try? observationRepository.countCompletedInference()) ?? 0
+    }
+
+    public func cleanupOldInferredScreenshots() {
+        let cutoff = Date().addingTimeInterval(-inferredScreenshotRetention)
+        let observationRepository = self.observationRepository
+        let fileStorageService = self.fileStorageService
+        Task.detached(priority: .utility) {
+            do {
+                let targets = try observationRepository.fetchInferredWithImage(olderThan: cutoff)
+                guard !targets.isEmpty else { return }
+                for observation in targets {
+                    guard let imagePath = observation.imagePath else { continue }
+                    do {
+                        try fileStorageService.deleteFile(at: URL(fileURLWithPath: imagePath))
+                    } catch {
+                        AppLogger.warning("Failed to delete old screenshot for \(observation.id): \(error)")
+                    }
+                    try observationRepository.clearImageReference(observationId: observation.id)
+                }
+                AppLogger.info("Cleaned up \(targets.count) old inferred screenshots")
+            } catch {
+                AppLogger.error("Failed to cleanup old inferred screenshots: \(error)")
+            }
+        }
+    }
+
+    @discardableResult
+    public func cleanupOldInferredScreenshotsSync() -> Bool {
+        let cutoff = Date().addingTimeInterval(-inferredScreenshotRetention)
+        do {
+            let targets = try observationRepository.fetchInferredWithImage(olderThan: cutoff)
+            guard !targets.isEmpty else { return true }
+            for observation in targets {
+                guard let imagePath = observation.imagePath else { continue }
+                do {
+                    try fileStorageService.deleteFile(at: URL(fileURLWithPath: imagePath))
+                } catch {
+                    AppLogger.warning("Failed to delete old screenshot for \(observation.id): \(error)")
+                }
+                try observationRepository.clearImageReference(observationId: observation.id)
+            }
+            return true
+        } catch {
+            AppLogger.error("Failed to cleanup old inferred screenshots: \(error)")
+            return false
+        }
     }
 
     public func completeSetup() {

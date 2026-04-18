@@ -3,13 +3,18 @@ import XCTest
 
 final class LogleafTests: XCTestCase {
 
+    func testAppSettingsDefaultOllamaModel() {
+        let settings = AppSettings()
+        XCTAssertEqual(settings.ollamaModel, "gemma4:e4b")
+    }
+
     // MARK: - Tag Tests
 
     func testTagCreation() {
-        let tag = Tag(name: "テスト", colorHex: "#FF0000", priority: 1)
+        let tag = Tag(name: "テスト", colorHex: "#FF0000", tagDescription: "テスト用タグ")
         XCTAssertEqual(tag.name, "テスト")
         XCTAssertEqual(tag.colorHex, "#FF0000")
-        XCTAssertEqual(tag.priority, 1)
+        XCTAssertEqual(tag.tagDescription, "テスト用タグ")
         XCTAssertTrue(tag.isActive)
     }
 
@@ -75,7 +80,6 @@ final class LogleafTests: XCTestCase {
         {
           "activity_summary": "コードを書いている",
           "predicted_tags": ["開発"],
-          "confidence": 0.85,
           "reason": "IDEが見えるため",
           "sensitivity_flag": "none"
         }
@@ -84,7 +88,6 @@ final class LogleafTests: XCTestCase {
         XCTAssertNotNil(result)
         XCTAssertEqual(result?.activitySummary, "コードを書いている")
         XCTAssertEqual(result?.predictedTags, ["開発"])
-        XCTAssertEqual(result?.confidence, 0.85)
     }
 
     func testParseResponseFiltersInvalidTags() {
@@ -94,7 +97,6 @@ final class LogleafTests: XCTestCase {
         {
           "activity_summary": "作業中",
           "predicted_tags": ["開発", "存在しないタグ"],
-          "confidence": 0.7,
           "reason": "test",
           "sensitivity_flag": "none"
         }
@@ -104,20 +106,20 @@ final class LogleafTests: XCTestCase {
         XCTAssertEqual(result?.predictedTags, ["開発"])
     }
 
-    func testParseResponseClampsConfidence() {
+    func testParseResponseHandlesMissingFields() {
         let builder = PromptBuilder()
         let tags = [Tag(name: "テスト")]
         let json = """
         {
           "activity_summary": "テスト",
           "predicted_tags": ["テスト"],
-          "confidence": 1.5,
           "reason": "test",
           "sensitivity_flag": "none"
         }
         """
         let result = builder.parseResponse(json, allowedTags: tags)
-        XCTAssertEqual(result?.confidence, 1.0)
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.predictedTags, ["テスト"])
     }
 
     func testParseInvalidJSON() {
@@ -134,7 +136,6 @@ final class LogleafTests: XCTestCase {
         {
           "activity_summary": "開発中",
           "predicted_tags": ["開発"],
-          "confidence": 0.9,
           "reason": "IDE visible",
           "sensitivity_flag": "none"
         }
@@ -145,6 +146,63 @@ final class LogleafTests: XCTestCase {
         XCTAssertEqual(result?.activitySummary, "開発中")
     }
 
+    func testParseValidBatchResponse() {
+        let builder = PromptBuilder()
+        let tags = [Tag(name: "開発"), Tag(name: "会議")]
+        let json = """
+        {
+          "results": [
+            {
+              "index": 1,
+              "activity_summary": "実装中",
+              "predicted_tags": ["開発"],
+              "reason": "IDE が表示されている",
+              "sensitivity_flag": "none"
+            },
+            {
+              "index": 2,
+              "activity_summary": "打ち合わせ",
+              "predicted_tags": ["会議"],
+              "reason": "通話画面",
+              "sensitivity_flag": "none"
+            }
+          ]
+        }
+        """
+        let results = builder.parseBatchResponse(json, expectedCount: 2, allowedTags: tags)
+        guard let parsed = results else {
+            XCTFail("バッチ結果の解析に失敗")
+            return
+        }
+        XCTAssertEqual(parsed.count, 2)
+        XCTAssertEqual(parsed[0]?.activitySummary, "実装中")
+        XCTAssertEqual(parsed[1]?.predictedTags, ["会議"])
+    }
+
+    func testParseBatchResponseFiltersInvalidTags() {
+        let builder = PromptBuilder()
+        let tags = [Tag(name: "開発")]
+        let json = """
+        {
+          "results": [
+            {
+              "index": 1,
+              "activity_summary": "作業中",
+              "predicted_tags": ["開発", "未知タグ"],
+              "reason": "test",
+              "sensitivity_flag": "none"
+            }
+          ]
+        }
+        """
+        let results = builder.parseBatchResponse(json, expectedCount: 1, allowedTags: tags)
+        guard let parsed = results else {
+            XCTFail("バッチ結果の解析に失敗")
+            return
+        }
+        XCTAssertEqual(parsed[0]?.predictedTags, ["開発"])
+    }
+
     // MARK: - CaptureJob Tests
 
     func testCaptureJobStatus() {
@@ -152,16 +210,6 @@ final class LogleafTests: XCTestCase {
         XCTAssertEqual(job.status, .queued)
         job.status = .succeeded
         XCTAssertEqual(job.status, .succeeded)
-    }
-
-    // MARK: - ExportFilter Tests
-
-    func testExportFilterDefaults() {
-        let filter = ExportFilter()
-        XCTAssertNil(filter.startDate)
-        XCTAssertNil(filter.endDate)
-        XCTAssertTrue(filter.includeUnclassified)
-        XCTAssertFalse(filter.includeScreenshots)
     }
 
     // MARK: - OllamaClient Tests

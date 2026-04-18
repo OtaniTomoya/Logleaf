@@ -7,9 +7,8 @@ public struct MainWindowView: View {
     public enum Tab: String, CaseIterable {
         case timeline = "タイムライン"
         case summary = "サマリ"
-        case tags = "タグ管理"
         case exclusions = "除外ルール"
-        case export = "エクスポート"
+        case settings = "設定"
         case troubleshoot = "トラブルシュート"
     }
 
@@ -32,6 +31,18 @@ public struct MainWindowView: View {
             }
         }
         .frame(minWidth: 800, minHeight: 500)
+        .onAppear {
+            if appState.shouldOpenSettings {
+                selectedTab = .settings
+                appState.shouldOpenSettings = false
+            }
+        }
+        .onChange(of: appState.shouldOpenSettings) {
+            if appState.shouldOpenSettings {
+                selectedTab = .settings
+                appState.shouldOpenSettings = false
+            }
+        }
     }
 
     @ViewBuilder
@@ -54,21 +65,16 @@ public struct MainWindowView: View {
                     tagRepository: appState.tagRepository
                 )
             )
-        case .tags:
-            TagManagementView(
-                viewModel: TagManagementViewModel(tagService: appState.tagService)
-            )
         case .exclusions:
             ExclusionRuleView(
                 viewModel: ExclusionRuleViewModel(exclusionService: appState.exclusionService)
             )
-        case .export:
-            ExportView(
-                viewModel: ExportViewModel(
-                    exportService: appState.exportService,
-                    tagRepository: appState.tagRepository
-                )
-            )
+        case .settings:
+            SettingsView(viewModel: SettingsViewModel(
+                settingsService: appState.settingsService,
+                inferenceService: appState.inferenceService
+            ))
+            .environmentObject(appState)
         case .troubleshoot:
             TroubleshootView()
                 .environmentObject(appState)
@@ -79,9 +85,8 @@ public struct MainWindowView: View {
         switch tab {
         case .timeline: return "calendar.day.timeline.left"
         case .summary: return "chart.bar"
-        case .tags: return "tag"
         case .exclusions: return "eye.slash"
-        case .export: return "square.and.arrow.up"
+        case .settings: return "gear"
         case .troubleshoot: return "wrench.and.screwdriver"
         }
     }

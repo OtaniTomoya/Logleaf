@@ -9,20 +9,18 @@ public struct Checkpoint: Codable, Identifiable, FetchableRecord, PersistableRec
     public var endAt: Date
     public var title: String?
     public var summary: String?
-    public var confidence: Double?
     public var sourceObservationCount: Int
     public var createdAt: Date
 
     public init(id: String = UUID().uuidString, startAt: Date, endAt: Date,
          title: String? = nil, summary: String? = nil,
-         confidence: Double? = nil, sourceObservationCount: Int = 0,
+         sourceObservationCount: Int = 0,
          createdAt: Date = Date()) {
         self.id = id
         self.startAt = startAt
         self.endAt = endAt
         self.title = title
         self.summary = summary
-        self.confidence = confidence
         self.sourceObservationCount = sourceObservationCount
         self.createdAt = createdAt
     }

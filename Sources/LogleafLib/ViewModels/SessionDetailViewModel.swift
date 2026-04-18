@@ -66,15 +66,6 @@ public final class SessionDetailViewModel: ObservableObject {
         }
     }
 
-    public func confirmSession() {
-        do {
-            session.status = .confirmed
-            try workSessionRepository.update(session)
-        } catch {
-            AppLogger.error("Failed to confirm session: \(error)")
-        }
-    }
-
     public func reInferObservation(id: String) {
         Task {
             await inferenceService.reInfer(observationId: id)

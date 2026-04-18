@@ -5,7 +5,7 @@ public final class SettingsViewModel: ObservableObject {
     @Published public var captureIntervalSeconds: Int = 60
     @Published public var checkpointIntervalMinutes: Int = 5
     @Published public var ollamaHost: String = "http://localhost:11434"
-    @Published public var ollamaModel: String = "llava"
+    @Published public var ollamaModel: String = "gemma4:e4b"
     @Published public var retentionDays: Int = 30
     @Published public var autoDeleteEnabled: Bool = true
     @Published public var availableModels: [String] = []

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct SetupView: View {
     @EnvironmentObject var appState: AppState
@@ -198,20 +199,46 @@ public struct SetupView: View {
                 .foregroundColor(.secondary)
 
             HStack {
-                TextField("タグ名", text: $viewModel.newTagName)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { viewModel.addTag() }
+                IMEAwareTagTextField(
+                    placeholder: "タグ名",
+                    text: $viewModel.newTagName,
+                    onCommit: { viewModel.addTag() }
+                )
+                .frame(height: 24)
                 Button("追加") { viewModel.addTag() }
                     .disabled(viewModel.newTagName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
 
-            List {
-                ForEach(viewModel.tags) { tag in
-                    Text(tag.name)
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    if viewModel.tags.isEmpty {
+                        Text("タグがまだありません")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    } else {
+                        ForEach(Array(viewModel.tags.enumerated()), id: \.element.id) { index, tag in
+                            HStack {
+                                Text(tag.name)
+                                Spacer()
+                                Button(role: .destructive) {
+                                    viewModel.removeTag(at: IndexSet(integer: index))
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
                 }
-                .onDelete(perform: viewModel.removeTag)
             }
             .frame(height: 120)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -225,5 +252,72 @@ public struct SetupView: View {
             Text("準備が整いました。「開始する」をクリックして記録を始めましょう。")
                 .foregroundColor(.secondary)
         }
+    }
+}
+
+private struct IMEAwareTagTextField: NSViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    let onCommit: () -> Void
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = ActivatingNSTextField(string: text)
+        field.placeholderString = placeholder
+        field.isBordered = true
+        field.bezelStyle = .roundedBezel
+        field.focusRingType = .default
+        field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.didPressEnter(_:))
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        // IME 変換中は stringValue を設定しない（marked text 破壊防止）
+        if let editor = nsView.currentEditor() as? NSTextView,
+           editor.markedRange().location != NSNotFound {
+            return
+        }
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        nsView.placeholderString = placeholder
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onCommit: onCommit)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding private var text: String
+        private let onCommit: () -> Void
+
+        init(text: Binding<String>, onCommit: @escaping () -> Void) {
+            _text = text
+            self.onCommit = onCommit
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            // IME 変換中はバインディング更新をスキップし、再描画による変換破壊を防止
+            if let editor = field.currentEditor() as? NSTextView,
+               editor.markedRange().location != NSNotFound {
+                return
+            }
+            text = field.stringValue
+        }
+
+        @objc func didPressEnter(_ sender: NSTextField) {
+            text = sender.stringValue
+            onCommit()
+        }
+    }
+}
+
+private final class ActivatingNSTextField: NSTextField {
+    override func mouseDown(with event: NSEvent) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        super.mouseDown(with: event)
     }
 }

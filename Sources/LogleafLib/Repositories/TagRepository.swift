@@ -10,14 +10,14 @@ public final class TagRepository {
 
     public func fetchAll() throws -> [Tag] {
         try databaseManager.reader.read { db in
-            try Tag.order(Tag.Columns.priority.asc).fetchAll(db)
+            try Tag.order(Tag.Columns.name.asc).fetchAll(db)
         }
     }
 
     public func fetchActive() throws -> [Tag] {
         try databaseManager.reader.read { db in
             try Tag.filter(Tag.Columns.isActive == true)
-                .order(Tag.Columns.priority.asc)
+                .order(Tag.Columns.name.asc)
                 .fetchAll(db)
         }
     }

@@ -8,7 +8,6 @@
 
 ## 前提条件
 - 回答は必ず日本語でしてください。
-- 何か大きい変更(変更量が200行を超える)を加える場合、まず何をするのか計画を立てた上で、ユーザーに「このような計画で進めようと思います。」と提案してください。この時、ユーザーから計画の修正を求められた場合は計画を修正して、再提案をしてください。
 
 ## 1. プロジェクト概要
 - Logleaf は、macOS のメニューバー常駐で作業記録を自動生成するローカル完結型アプリです。
@@ -45,7 +44,7 @@
   - `Infrastructure/`: Logger, FileStorage, OllamaClient, PromptBuilder
   - `Models/`: ドメインモデル
   - `Repositories/`: GRDBアクセス
-  - `Services/`: Capture/Scheduler/Inference/Aggregation/Export など
+  - `Services/`: Capture/Scheduler/Inference/Aggregation など
   - `ViewModels/`: 画面状態と操作
   - `Views/`: SwiftUI画面
 - `Tests/LogleafTests/`: 単体テスト

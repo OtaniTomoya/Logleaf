@@ -33,7 +33,7 @@ public final class CheckpointRepository {
 
     public func deleteByDateRange(start: Date, end: Date) throws {
         try databaseManager.writer.write { db in
-            try Checkpoint
+            _ = try Checkpoint
                 .filter(Column("startAt") >= start && Column("endAt") <= end)
                 .deleteAll(db)
         }

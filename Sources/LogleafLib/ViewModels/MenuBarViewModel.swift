@@ -6,7 +6,7 @@ public final class MenuBarViewModel: ObservableObject {
     @Published public var statusText = "待機中"
     @Published public var todayMinutes = 0
     @Published public var latestActivity = ""
-    @Published public var unconfirmedCount = 0
+
     @Published public var nextCaptureDate: Date?
 
     private let appState: AppState
@@ -19,7 +19,6 @@ public final class MenuBarViewModel: ObservableObject {
         isCapturing = appState.isCapturing
         statusText = appState.captureStatus.rawValue
         todayMinutes = (try? appState.workSessionRepository.totalMinutesForDate(Date())) ?? 0
-        unconfirmedCount = (try? appState.workSessionRepository.countUnconfirmed()) ?? 0
         nextCaptureDate = appState.schedulerService.nextFireDate
     }
 

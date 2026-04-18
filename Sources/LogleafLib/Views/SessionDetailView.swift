@@ -132,12 +132,6 @@ public struct SessionDetailView: View {
                         viewModel.isEditing = true
                     }
                     Spacer()
-                    if viewModel.session.status == .draft {
-                        Button("確定") {
-                            viewModel.confirmSession()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
                 }
             }
             .padding()

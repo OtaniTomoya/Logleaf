@@ -125,14 +125,6 @@ public final class WorkSessionRepository {
         }
     }
 
-    public func countUnconfirmed() throws -> Int {
-        try databaseManager.reader.read { db in
-            try WorkSession
-                .filter(WorkSession.Columns.status == WorkSession.Status.draft.rawValue)
-                .fetchCount(db)
-        }
-    }
-
     public func totalMinutesForDate(_ date: Date) throws -> Int {
         let sessions = try fetchForDate(date)
         return sessions.reduce(0) { $0 + $1.durationMinutes }
