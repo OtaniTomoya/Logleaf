@@ -20,7 +20,11 @@ let package = Package(
             dependencies: [
                 "LogleafLib",
             ],
-            path: "Sources/Logleaf"
+            path: "Sources/Logleaf",
+            resources: [
+                .copy("Resources/AppIcon.icns"),
+                .copy("Resources/AppIcon.png"),
+            ]
         ),
         .testTarget(
             name: "LogleafTests",
