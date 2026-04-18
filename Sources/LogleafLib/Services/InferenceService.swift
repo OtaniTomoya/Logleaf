@@ -6,7 +6,6 @@ public final class InferenceService {
     private let promptBuilder: PromptBuilder
     private let observationRepository: ObservationRepository
     private let tagRepository: TagRepository
-    private let fileStorageService: FileStorageService
 
     private var configuredHost: String = "http://localhost:11434"
     private var configuredModel: String = "gemma4:e4b"
@@ -15,13 +14,11 @@ public final class InferenceService {
     public init(ollamaClient: OllamaClientProtocol,
          promptBuilder: PromptBuilder,
          observationRepository: ObservationRepository,
-         tagRepository: TagRepository,
-         fileStorageService: FileStorageService) {
+         tagRepository: TagRepository) {
         self.ollamaClient = ollamaClient
         self.promptBuilder = promptBuilder
         self.observationRepository = observationRepository
         self.tagRepository = tagRepository
-        self.fileStorageService = fileStorageService
     }
 
     public func configure(host: String, model: String) {
@@ -93,15 +90,6 @@ public final class InferenceService {
         }
     }
 
-    private func deleteScreenshotAfterInference(observationId: String, imageURL: URL) {
-        do {
-            try fileStorageService.deleteFile(at: imageURL)
-            try observationRepository.clearImageReference(observationId: observationId)
-        } catch {
-            AppLogger.error("Failed to delete screenshot after inference for \(observationId): \(error)")
-        }
-    }
-
     public func reInfer(observationId: String) async {
         guard let observation = try? observationRepository.fetch(id: observationId),
               let imagePath = observation.imagePath else {
@@ -160,6 +148,11 @@ public final class InferenceService {
                 )
             } catch {
                 AppLogger.error("Failed to read screenshot for \(target.observationId): \(error)")
+                do {
+                    try observationRepository.clearImageReference(observationId: target.observationId)
+                } catch {
+                    AppLogger.error("Failed to clear broken image reference for \(target.observationId): \(error)")
+                }
             }
         }
 
@@ -184,7 +177,6 @@ public final class InferenceService {
                 }
                 try saveInferenceResult(
                     observationId: target.observationId,
-                    imageURL: target.imageURL,
                     result: result,
                     allowedTags: allowedTags
                 )
@@ -197,7 +189,6 @@ public final class InferenceService {
 
     private func saveInferenceResult(
         observationId: String,
-        imageURL: URL,
         result: InferenceResult,
         allowedTags: [Tag]
     ) throws {
@@ -216,7 +207,6 @@ public final class InferenceService {
             }
         }
         try observationRepository.saveTags(tags)
-        deleteScreenshotAfterInference(observationId: observationId, imageURL: imageURL)
         AppLogger.info("Inference complete for \(observationId): \(result.activitySummary)")
     }
 

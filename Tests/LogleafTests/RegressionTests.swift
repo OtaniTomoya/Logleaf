@@ -25,6 +25,52 @@ final class RegressionTests: XCTestCase {
         appState.stopCapturing()
     }
 
+    @MainActor
+    func testAppStateCleanupOldInferredScreenshotsKeepsOneDay() throws {
+        let env = TestEnvironment()
+        let appState = AppState(fileStorageService: env.fileStorageService, ollamaClient: OllamaClient())
+
+        let now = Date()
+        let oldDate = now.addingTimeInterval(-(24 * 60 * 60 + 60))
+        let recentDate = now.addingTimeInterval(-(23 * 60 * 60))
+
+        let oldImageURL = env.fileStorageService.screenshotPath(for: oldDate, id: UUID().uuidString)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: oldImageURL)
+        let oldJob = CaptureJob(scheduledAt: oldDate, executedAt: oldDate, status: .succeeded)
+        try env.captureJobRepository.save(oldJob)
+        var oldObservation = Observation(
+            captureJobId: oldJob.id,
+            capturedAt: oldDate,
+            imagePath: oldImageURL.path,
+            captureState: .captured
+        )
+        oldObservation.aiSummary = "old inferred"
+        try env.observationRepository.save(oldObservation)
+
+        let recentImageURL = env.fileStorageService.screenshotPath(for: recentDate, id: UUID().uuidString)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: recentImageURL)
+        let recentJob = CaptureJob(scheduledAt: recentDate, executedAt: recentDate, status: .succeeded)
+        try env.captureJobRepository.save(recentJob)
+        var recentObservation = Observation(
+            captureJobId: recentJob.id,
+            capturedAt: recentDate,
+            imagePath: recentImageURL.path,
+            captureState: .captured
+        )
+        recentObservation.aiSummary = "recent inferred"
+        try env.observationRepository.save(recentObservation)
+
+        appState.cleanupOldInferredScreenshots()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldImageURL.path))
+        let refreshedOld = try XCTUnwrap(env.observationRepository.fetch(id: oldObservation.id))
+        XCTAssertNil(refreshedOld.imagePath)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recentImageURL.path))
+        let refreshedRecent = try XCTUnwrap(env.observationRepository.fetch(id: recentObservation.id))
+        XCTAssertEqual(refreshedRecent.imagePath, recentImageURL.path)
+    }
+
     func testBuildSessionsPreservesProtectedSessionsDuringRebuild() throws {
         let env = TestEnvironment()
         let baseDate = makeDate(year: 2026, month: 4, day: 18, hour: 9, minute: 0)
@@ -47,7 +93,8 @@ final class RegressionTests: XCTestCase {
         let autoConfirmedSession = WorkSession(
             startAt: rebuiltObservation1.capturedAt,
             endAt: rebuiltObservation2.capturedAt,
-            aiTitle: "Draft"
+            aiTitle: "Draft",
+            status: .draft
         )
         try env.workSessionRepository.save(autoConfirmedSession)
         try env.workSessionRepository.saveSessionObservation(
@@ -94,6 +141,33 @@ final class RegressionTests: XCTestCase {
 
         XCTAssertEqual(Set(mergedTags.map(\.tagId)), Set([aiTag.id, userTag.id]))
         XCTAssertEqual(Set(mergedTags.map(\.source)), Set([.ai, .user]))
+    }
+
+    func testBuildSessionsPreservesMergedSession() throws {
+        let env = TestEnvironment()
+        let baseDate = makeDate(year: 2026, month: 4, day: 18, hour: 10, minute: 0)
+        let firstObservation = try env.makeObservation(at: baseDate)
+        let secondObservation = try env.makeObservation(at: baseDate.addingTimeInterval(300))
+
+        let session1 = WorkSession(startAt: firstObservation.capturedAt, endAt: firstObservation.capturedAt, aiTitle: "A")
+        let session2 = WorkSession(startAt: secondObservation.capturedAt, endAt: secondObservation.capturedAt, aiTitle: "B")
+        try env.workSessionRepository.save(session1)
+        try env.workSessionRepository.save(session2)
+        try env.workSessionRepository.saveSessionObservation(
+            SessionObservation(workSessionId: session1.id, observationId: firstObservation.id)
+        )
+        try env.workSessionRepository.saveSessionObservation(
+            SessionObservation(workSessionId: session2.id, observationId: secondObservation.id)
+        )
+
+        try env.aggregationService.mergeSessions(sessionIds: [session1.id, session2.id])
+        let mergedBefore = try XCTUnwrap(try env.workSessionRepository.fetchForDate(baseDate).onlyElement)
+        XCTAssertEqual(mergedBefore.status, .edited)
+
+        _ = try env.aggregationService.buildSessions(for: baseDate)
+
+        let mergedAfter = try env.workSessionRepository.fetchForDate(baseDate)
+        XCTAssertEqual(mergedAfter.map(\.id), [mergedBefore.id])
     }
 
     func testSplitSessionSortsObservationsByCapturedAtBeforeBuildingSessions() throws {
@@ -145,7 +219,7 @@ final class RegressionTests: XCTestCase {
         XCTAssertTrue(settings.autoDeleteEnabled)
     }
 
-    func testInferDeletesScreenshotAndClearsImagePathOnSuccess() async throws {
+    func testInferKeepsScreenshotAndImagePathOnSuccess() async throws {
         let env = TestEnvironment()
         let now = Date()
         let imageURL = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
@@ -182,8 +256,7 @@ final class RegressionTests: XCTestCase {
             ollamaClient: mockClient,
             promptBuilder: PromptBuilder(),
             observationRepository: env.observationRepository,
-            tagRepository: env.tagRepository,
-            fileStorageService: env.fileStorageService
+            tagRepository: env.tagRepository
         )
 
         await inferenceService.infer(
@@ -193,9 +266,9 @@ final class RegressionTests: XCTestCase {
             frontmostWindowTitle: "Test"
         )
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: imageURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imageURL.path))
         let refreshed = try XCTUnwrap(env.observationRepository.fetch(id: observation.id))
-        XCTAssertNil(refreshed.imagePath)
+        XCTAssertEqual(refreshed.imagePath, imageURL.path)
     }
 
     func testInferKeepsScreenshotAndImagePathOnFailure() async throws {
@@ -221,8 +294,7 @@ final class RegressionTests: XCTestCase {
             ollamaClient: mockClient,
             promptBuilder: PromptBuilder(),
             observationRepository: env.observationRepository,
-            tagRepository: env.tagRepository,
-            fileStorageService: env.fileStorageService
+            tagRepository: env.tagRepository
         )
 
         await inferenceService.infer(
@@ -294,8 +366,7 @@ final class RegressionTests: XCTestCase {
             ollamaClient: mockClient,
             promptBuilder: PromptBuilder(),
             observationRepository: env.observationRepository,
-            tagRepository: env.tagRepository,
-            fileStorageService: env.fileStorageService
+            tagRepository: env.tagRepository
         )
 
         let pending = try env.observationRepository.fetchPendingInferenceObservations()
@@ -350,8 +421,7 @@ final class RegressionTests: XCTestCase {
             ollamaClient: mockClient,
             promptBuilder: PromptBuilder(),
             observationRepository: env.observationRepository,
-            tagRepository: env.tagRepository,
-            fileStorageService: env.fileStorageService
+            tagRepository: env.tagRepository
         )
 
         let pending = try env.observationRepository.fetchPendingInferenceObservations()
@@ -363,7 +433,7 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(try env.observationRepository.countCompletedInference(), 1)
         let refreshed = try XCTUnwrap(env.observationRepository.fetch(id: observation.id))
         XCTAssertEqual(refreshed.aiSummary, "仕様書を読んでいる")
-        XCTAssertNil(refreshed.imagePath)
+        XCTAssertEqual(refreshed.imagePath, imageURL.path)
     }
 
     func testInferPendingObservationsFallsBackWhenConfiguredModelIsMissing() async throws {
@@ -404,8 +474,7 @@ final class RegressionTests: XCTestCase {
             ollamaClient: mockClient,
             promptBuilder: PromptBuilder(),
             observationRepository: env.observationRepository,
-            tagRepository: env.tagRepository,
-            fileStorageService: env.fileStorageService
+            tagRepository: env.tagRepository
         )
         inferenceService.configure(host: "http://localhost:11434", model: "gemma4:e4b")
 
@@ -454,8 +523,7 @@ final class RegressionTests: XCTestCase {
             ollamaClient: mockClient,
             promptBuilder: PromptBuilder(),
             observationRepository: env.observationRepository,
-            tagRepository: env.tagRepository,
-            fileStorageService: env.fileStorageService
+            tagRepository: env.tagRepository
         )
 
         let pending = try env.observationRepository.fetchPendingInferenceObservations()
@@ -464,6 +532,40 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(mockClient.receivedImageCounts, [10, 2])
         XCTAssertEqual(try env.observationRepository.countPendingInference(), 0)
         XCTAssertEqual(try env.observationRepository.countCompletedInference(), 12)
+    }
+
+    func testInferPendingObservationsClearsBrokenImageReference() async throws {
+        let env = TestEnvironment()
+        let now = Date()
+        let job = CaptureJob(scheduledAt: now, executedAt: now, status: .succeeded)
+        try env.captureJobRepository.save(job)
+
+        let missingImagePath = env.fileStorageService
+            .screenshotPath(for: now, id: UUID().uuidString)
+            .path
+        let observation = Observation(
+            captureJobId: job.id,
+            capturedAt: now,
+            imagePath: missingImagePath,
+            captureState: .captured
+        )
+        try env.observationRepository.save(observation)
+
+        let inferenceService = InferenceService(
+            ollamaClient: MockOllamaClient(generatedText: nil),
+            promptBuilder: PromptBuilder(),
+            observationRepository: env.observationRepository,
+            tagRepository: env.tagRepository
+        )
+
+        let pending = try env.observationRepository.fetchPendingInferenceObservations()
+        XCTAssertEqual(pending.count, 1)
+
+        await inferenceService.inferPendingObservations(pending)
+
+        XCTAssertEqual(try env.observationRepository.countPendingInference(), 0)
+        let refreshed = try XCTUnwrap(env.observationRepository.fetch(id: observation.id))
+        XCTAssertNil(refreshed.imagePath)
     }
 
     func testDailyFeedbackGenerateUpdatesSameDayRecordInsteadOfDuplicating() async throws {
@@ -526,7 +628,7 @@ final class RegressionTests: XCTestCase {
 
         let result = try await service.generateFeedback(for: targetDate)
         XCTAssertEqual(result.aiFeedback, "フォールバック後の要約")
-        XCTAssertEqual(mockClient.configuredModel, "gemma4:e2b")
+        XCTAssertEqual(mockClient.configuredModel, "gemma4:e4b")
     }
 
     func testDailyFeedbackGenerateUsesLocalFallbackWhenResponseIsEmpty() async throws {
@@ -717,8 +819,7 @@ private final class TestEnvironment {
             ollamaClient: OllamaClient(),
             promptBuilder: PromptBuilder(),
             observationRepository: observationRepository,
-            tagRepository: tagRepository,
-            fileStorageService: fileStorageService
+            tagRepository: tagRepository
         )
         captureService = CaptureService(
             captureJobRepository: captureJobRepository,

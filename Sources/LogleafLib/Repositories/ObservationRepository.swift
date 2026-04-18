@@ -111,6 +111,7 @@ public final class ObservationRepository {
             var request = Observation
                 .filter(
                     Observation.Columns.captureState == Observation.CaptureState.captured.rawValue
+                    && Column("aiSummary") == nil
                     && Column("imagePath") != nil
                 )
                 .order(Observation.Columns.capturedAt.asc)
@@ -128,6 +129,7 @@ public final class ObservationRepository {
             try Observation
                 .filter(
                     Observation.Columns.captureState == Observation.CaptureState.captured.rawValue
+                    && Column("aiSummary") == nil
                     && Column("imagePath") != nil
                 )
                 .fetchCount(db)
@@ -167,6 +169,21 @@ public final class ObservationRepository {
                 }
                 return (observation: obs, tagNames: tagNames)
             }
+        }
+    }
+
+    public func fetchInferredWithImage(olderThan date: Date, limit: Int = 500) throws -> [Observation] {
+        try databaseManager.reader.read { db in
+            try Observation
+                .filter(
+                    Observation.Columns.captureState == Observation.CaptureState.captured.rawValue
+                    && Column("aiSummary") != nil
+                    && Column("imagePath") != nil
+                    && Observation.Columns.capturedAt < date
+                )
+                .order(Observation.Columns.capturedAt.asc)
+                .limit(limit)
+                .fetchAll(db)
         }
     }
 

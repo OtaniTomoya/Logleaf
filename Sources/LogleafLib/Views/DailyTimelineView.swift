@@ -68,6 +68,7 @@ public struct DailyTimelineView: View {
                                 date: viewModel.selectedDate
                             )
                         )
+                        .id(Calendar.current.startOfDay(for: viewModel.selectedDate))
                     }
                     .padding()
                 }
@@ -102,9 +103,7 @@ public struct DailyTimelineView: View {
         .onChange(of: appState.inferenceJustCompleted) {
             if appState.inferenceJustCompleted {
                 appState.inferenceJustCompleted = false
-                if Calendar.current.isDateInToday(viewModel.selectedDate) {
-                    viewModel.loadSessions()
-                }
+                viewModel.loadSessions()
             }
         }
     }

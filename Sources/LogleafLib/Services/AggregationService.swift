@@ -181,7 +181,7 @@ public final class AggregationService {
             startAt: sorted.first!.startAt,
             endAt: sorted.last!.endAt,
             aiTitle: sorted.first!.displayTitle,
-            status: .confirmed
+            status: .edited
         )
         try workSessionRepository.save(merged)
 
@@ -265,7 +265,7 @@ public final class AggregationService {
     }
 
     private func shouldPreserveSession(_ session: WorkSession) throws -> Bool {
-        if session.status == .edited { return true }
+        if session.status == .edited || session.status == .confirmed { return true }
         if session.finalTitle != nil || session.finalNote != nil { return true }
 
         let tags = try workSessionRepository.fetchTags(sessionId: session.id)

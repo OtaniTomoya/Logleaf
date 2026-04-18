@@ -91,8 +91,13 @@ public final class DailyFeedbackService {
             guard let fallbackModel = selectFallbackTextModel(from: availableModels) else {
                 throw OllamaError.modelNotFound
             }
-            ollamaClient.configure(host: ollamaClient.configuredHost, model: fallbackModel)
+            let host = ollamaClient.configuredHost
+            let originalModel = ollamaClient.configuredModel
+            ollamaClient.configure(host: host, model: fallbackModel)
             AppLogger.warning("Daily feedback switched to fallback model: \(fallbackModel)")
+            defer {
+                ollamaClient.configure(host: host, model: originalModel)
+            }
             return try await ollamaClient.generateText(prompt: prompt)
         }
     }

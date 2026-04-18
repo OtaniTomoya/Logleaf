@@ -17,6 +17,8 @@ public final class AppState: ObservableObject {
     @Published public var currentInferenceTotalCount: Int = 0
     @Published public var shouldOpenSettings: Bool = false
     @Published public var inferenceJustCompleted: Bool = false
+    private var isRunningPendingInference: Bool = false
+    private let inferredScreenshotRetention: TimeInterval = 24 * 60 * 60
 
     // MARK: - Services
     public let databaseManager: DatabaseManager
@@ -78,8 +80,7 @@ public final class AppState: ObservableObject {
             ollamaClient: ollamaClient,
             promptBuilder: promptBuilder,
             observationRepository: observationRepo,
-            tagRepository: tagRepo,
-            fileStorageService: fileStorage
+            tagRepository: tagRepo
         )
 
         self.captureService = CaptureService(
@@ -112,7 +113,9 @@ public final class AppState: ObservableObject {
     }
 
     private func loadInitialState() {
-        applyRuntimeSettings()
+        let settings = (try? settingsService.loadSettings()) ?? AppSettings()
+        inferenceService.configure(host: settings.ollamaHost, model: settings.ollamaModel)
+        cleanupOldInferredScreenshots()
         refreshInferenceQueueStats()
         do {
             let setupDone = try settingsService.loadBool(forKey: "setup_complete")
@@ -155,13 +158,27 @@ public final class AppState: ObservableObject {
     }
 
     public func captureNow() async {
-        captureStatus = .capturing
+        let wasInferring = isRunningPendingInference
+        if !wasInferring {
+            captureStatus = .capturing
+        }
         await captureService.captureOnce()
-        captureStatus = isCapturing ? .capturing : .idle
+        if !wasInferring {
+            captureStatus = isCapturing ? .capturing : .idle
+        }
         refreshInferenceQueueStats()
     }
 
     public func runPendingInference() async {
+        guard !isRunningPendingInference else { return }
+        isRunningPendingInference = true
+        defer {
+            isRunningPendingInference = false
+            if captureStatus == .inferring {
+                captureStatus = isCapturing ? .capturing : .idle
+            }
+        }
+
         applyRuntimeSettings()
 
         let pendingObservations = (try? observationRepository.fetchPendingInferenceObservations()) ?? []
@@ -194,13 +211,32 @@ public final class AppState: ObservableObject {
         }
 
         refreshInferenceQueueStats()
-        captureStatus = isCapturing ? .capturing : .idle
         inferenceJustCompleted = true
+        cleanupOldInferredScreenshots()
     }
 
     public func refreshInferenceQueueStats() {
         pendingInferenceCount = (try? observationRepository.countPendingInference()) ?? 0
         completedInferenceCount = (try? observationRepository.countCompletedInference()) ?? 0
+    }
+
+    public func cleanupOldInferredScreenshots() {
+        let cutoff = Date().addingTimeInterval(-inferredScreenshotRetention)
+        do {
+            let targets = try observationRepository.fetchInferredWithImage(olderThan: cutoff)
+            guard !targets.isEmpty else { return }
+            for observation in targets {
+                guard let imagePath = observation.imagePath else { continue }
+                do {
+                    try fileStorageService.deleteFile(at: URL(fileURLWithPath: imagePath))
+                } catch {
+                    AppLogger.warning("Failed to delete old screenshot for \(observation.id): \(error)")
+                }
+                try observationRepository.clearImageReference(observationId: observation.id)
+            }
+        } catch {
+            AppLogger.error("Failed to cleanup old inferred screenshots: \(error)")
+        }
     }
 
     public func completeSetup() {

@@ -144,7 +144,9 @@ public struct MenuBarPopoverView: View {
     }
 
     private func openMainWindow() {
-        openWindow(id: "main")
+        if resolveMainWindow() == nil {
+            openWindow(id: "main")
+        }
         activateAndFocusMainWindow(after: 0)
         activateAndFocusMainWindow(after: 0.15)
     }
