@@ -56,15 +56,10 @@ public final class AggregationService {
         let summaries = observations.compactMap(\.aiSummary)
         let representative = summaries.first ?? ""
 
-        // Calculate average confidence
-        let confidences = observations.compactMap(\.aiConfidence)
-        let avgConfidence = confidences.isEmpty ? 0.0 : confidences.reduce(0, +) / Double(confidences.count)
-
         let checkpoint = Checkpoint(
             startAt: first.capturedAt,
             endAt: last.capturedAt,
             title: representative,
-            confidence: avgConfidence,
             sourceObservationCount: observations.count
         )
         try checkpointRepository.save(checkpoint)
@@ -139,18 +134,13 @@ public final class AggregationService {
         let summaries = observations.compactMap(\.aiSummary)
         let title = summaries.first ?? "未分類"
 
-        let confidences = observations.compactMap(\.aiConfidence)
-        let avgConfidence = confidences.isEmpty ? 0.0 : confidences.reduce(0, +) / Double(confidences.count)
-
-        // Select representative image (highest confidence)
-        let representative = observations.max(by: { ($0.aiConfidence ?? 0) < ($1.aiConfidence ?? 0) })
-        let repImagePath = representative?.imagePath
+        // Select representative image (first with image)
+        let repImagePath = observations.first(where: { $0.imagePath != nil })?.imagePath
 
         let session = WorkSession(
             startAt: first.capturedAt,
             endAt: last.capturedAt,
             aiTitle: title,
-            aiConfidence: avgConfidence,
             representativeImagePath: repImagePath
         )
         try workSessionRepository.save(session)
@@ -187,15 +177,10 @@ public final class AggregationService {
         let observationIds = try sorted.flatMap { try workSessionRepository.fetchObservationIds(sessionId: $0.id) }
         let observations = try observationIds.compactMap { try observationRepository.fetch(id: $0) }
         let carriedTags = try uniqueMergedTags(from: sorted)
-        let confidenceValues = sorted.compactMap(\.aiConfidence)
-        let mergedConfidence = confidenceValues.isEmpty
-            ? nil
-            : confidenceValues.reduce(0, +) / Double(confidenceValues.count)
         let merged = WorkSession(
             startAt: sorted.first!.startAt,
             endAt: sorted.last!.endAt,
             aiTitle: sorted.first!.displayTitle,
-            aiConfidence: mergedConfidence,
             status: .confirmed
         )
         try workSessionRepository.save(merged)

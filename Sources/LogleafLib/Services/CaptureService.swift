@@ -8,18 +8,15 @@ public final class CaptureService {
     private let observationRepository: ObservationRepository
     private let exclusionService: ExclusionService
     private let fileStorageService: FileStorageService
-    private let inferenceService: InferenceService
 
     public init(captureJobRepository: CaptureJobRepository,
          observationRepository: ObservationRepository,
          exclusionService: ExclusionService,
-         fileStorageService: FileStorageService,
-         inferenceService: InferenceService) {
+         fileStorageService: FileStorageService) {
         self.captureJobRepository = captureJobRepository
         self.observationRepository = observationRepository
         self.exclusionService = exclusionService
         self.fileStorageService = fileStorageService
-        self.inferenceService = inferenceService
     }
 
     public func captureOnce() async {
@@ -64,13 +61,6 @@ public final class CaptureService {
                 captureState: .captured
             )
             try observationRepository.save(observation)
-
-            // Run inference asynchronously
-            Task {
-                await inferenceService.infer(observationId: observation.id, imageURL: frame.imageURL,
-                                             frontmostApp: context.appName,
-                                             frontmostWindowTitle: context.windowTitle)
-            }
         } catch {
             AppLogger.error("Capture failed: \(error)")
             try? captureJobRepository.update(id: jobId, status: .failed, errorMessage: error.localizedDescription)

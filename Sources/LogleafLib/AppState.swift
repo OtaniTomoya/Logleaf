@@ -9,9 +9,14 @@ public final class AppState: ObservableObject {
     @Published public var captureStatus: CaptureStatus = .idle
     @Published public var todayRecordedMinutes: Int = 0
     @Published public var latestActivity: String = ""
-    @Published public var unconfirmedCount: Int = 0
     @Published public var nextCaptureDate: Date?
     @Published public var selectedDate: Date = Date()
+    @Published public var pendingInferenceCount: Int = 0
+    @Published public var completedInferenceCount: Int = 0
+    @Published public var currentInferenceProcessedCount: Int = 0
+    @Published public var currentInferenceTotalCount: Int = 0
+    @Published public var shouldOpenSettings: Bool = false
+    @Published public var inferenceJustCompleted: Bool = false
 
     // MARK: - Services
     public let databaseManager: DatabaseManager
@@ -35,6 +40,8 @@ public final class AppState: ObservableObject {
     public let exportService: ExportService
     public let settingsService: SettingsService
     public let schedulerService: SchedulerService
+    public let dailyFeedbackService: DailyFeedbackService
+    public let dailyFeedbackRepository: DailyFeedbackRepository
 
     public init(
         fileStorageService: FileStorageService = FileStorageService(),
@@ -83,8 +90,7 @@ public final class AppState: ObservableObject {
             captureJobRepository: captureJobRepo,
             observationRepository: observationRepo,
             exclusionService: self.exclusionService,
-            fileStorageService: fileStorage,
-            inferenceService: self.inferenceService
+            fileStorageService: fileStorage
         )
 
         self.aggregationService = AggregationService(
@@ -102,6 +108,16 @@ public final class AppState: ObservableObject {
             fileStorageService: fileStorage
         )
 
+        let dailyFeedbackRepo = DailyFeedbackRepository(databaseManager: dbManager)
+        self.dailyFeedbackRepository = dailyFeedbackRepo
+        self.dailyFeedbackService = DailyFeedbackService(
+            ollamaClient: ollamaClient,
+            promptBuilder: promptBuilder,
+            workSessionRepository: workSessionRepo,
+            tagRepository: tagRepo,
+            dailyFeedbackRepository: dailyFeedbackRepo
+        )
+
         self.schedulerService = SchedulerService(captureService: captureService)
 
         loadInitialState()
@@ -109,6 +125,7 @@ public final class AppState: ObservableObject {
 
     private func loadInitialState() {
         applyRuntimeSettings()
+        refreshInferenceQueueStats()
         do {
             let setupDone = try settingsService.loadBool(forKey: "setup_complete")
             isSetupComplete = setupDone
@@ -153,6 +170,45 @@ public final class AppState: ObservableObject {
         captureStatus = .capturing
         await captureService.captureOnce()
         captureStatus = isCapturing ? .capturing : .idle
+        refreshInferenceQueueStats()
+    }
+
+    public func runPendingInference() async {
+        applyRuntimeSettings()
+
+        let pendingObservations = (try? observationRepository.fetchPendingInferenceObservations()) ?? []
+        currentInferenceProcessedCount = 0
+        currentInferenceTotalCount = pendingObservations.count
+
+        guard !pendingObservations.isEmpty else {
+            refreshInferenceQueueStats()
+            return
+        }
+
+        captureStatus = .inferring
+        await inferenceService.inferPendingObservations(pendingObservations) { [weak self] processed, total in
+            Task { @MainActor [weak self] in
+                self?.currentInferenceProcessedCount = processed
+                self?.currentInferenceTotalCount = total
+                self?.refreshInferenceQueueStats()
+            }
+        }
+        // 推論完了後にセッションを自動再構築
+        do {
+            try aggregationService.buildCheckpoints(for: Date())
+            _ = try aggregationService.buildSessions(for: Date())
+        } catch {
+            AppLogger.error("Failed to rebuild sessions after inference: \(error)")
+        }
+
+        refreshInferenceQueueStats()
+        captureStatus = isCapturing ? .capturing : .idle
+        inferenceJustCompleted = true
+    }
+
+    public func refreshInferenceQueueStats() {
+        pendingInferenceCount = (try? observationRepository.countPendingInference()) ?? 0
+        completedInferenceCount = (try? observationRepository.countCompletedInference()) ?? 0
     }
 
     public func completeSetup() {

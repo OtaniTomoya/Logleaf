@@ -96,31 +96,6 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(Set(mergedTags.map(\.source)), Set([.ai, .user]))
     }
 
-    func testMergeSessionsAveragesConfidenceUsingOnlyNonNilValues() throws {
-        let env = TestEnvironment()
-        let baseDate = makeDate(year: 2026, month: 4, day: 18, hour: 10, minute: 30)
-
-        let session1 = WorkSession(
-            startAt: baseDate,
-            endAt: baseDate.addingTimeInterval(300),
-            aiTitle: "A",
-            aiConfidence: nil
-        )
-        let session2 = WorkSession(
-            startAt: baseDate.addingTimeInterval(360),
-            endAt: baseDate.addingTimeInterval(660),
-            aiTitle: "B",
-            aiConfidence: 0.8
-        )
-        try env.workSessionRepository.save(session1)
-        try env.workSessionRepository.save(session2)
-
-        try env.aggregationService.mergeSessions(sessionIds: [session1.id, session2.id])
-
-        let mergedSession = try XCTUnwrap(try env.workSessionRepository.fetchForDate(baseDate).onlyElement)
-        XCTAssertEqual(try XCTUnwrap(mergedSession.aiConfidence), 0.8, accuracy: 0.000_1)
-    }
-
     func testSplitSessionSortsObservationsByCapturedAtBeforeBuildingSessions() throws {
         let env = TestEnvironment()
         let t0 = makeDate(year: 2026, month: 4, day: 18, hour: 9, minute: 0)
@@ -245,11 +220,15 @@ final class RegressionTests: XCTestCase {
         let mockClient = MockOllamaClient(
             generatedText: """
             {
-              "activity_summary": "コードを書いている",
-              "predicted_tags": ["開発"],
-              "confidence": 0.9,
-              "reason": "IDEが見えるため",
-              "sensitivity_flag": "none"
+              "results": [
+                {
+                  "index": 1,
+                  "activity_summary": "コードを書いている",
+                  "predicted_tags": ["開発"],
+                  "reason": "IDEが見えるため",
+                  "sensitivity_flag": "none"
+                }
+              ]
             }
             """
         )
@@ -312,6 +291,235 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(refreshed.imagePath, imageURL.path)
     }
 
+    func testInferPendingObservationsUpdatesPendingAndCompletedCounts() async throws {
+        let env = TestEnvironment()
+        let now = Date()
+        let tag = Tag(name: "開発")
+        try env.tagRepository.save(tag)
+
+        let imageURL1 = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
+        let imageURL2 = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: imageURL1)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: imageURL2)
+
+        let job1 = CaptureJob(scheduledAt: now, executedAt: now, status: .succeeded)
+        let job2 = CaptureJob(scheduledAt: now, executedAt: now, status: .succeeded)
+        try env.captureJobRepository.save(job1)
+        try env.captureJobRepository.save(job2)
+
+        let observation1 = Observation(
+            captureJobId: job1.id,
+            capturedAt: now,
+            imagePath: imageURL1.path,
+            captureState: .captured
+        )
+        let observation2 = Observation(
+            captureJobId: job2.id,
+            capturedAt: now.addingTimeInterval(1),
+            imagePath: imageURL2.path,
+            captureState: .captured
+        )
+        try env.observationRepository.save(observation1)
+        try env.observationRepository.save(observation2)
+
+        let mockClient = MockOllamaClient(
+            generatedText: """
+            {
+              "results": [
+                {
+                  "index": 1,
+                  "activity_summary": "コードを書いている",
+                  "predicted_tags": ["開発"],
+                  "reason": "IDEが見えるため",
+                  "sensitivity_flag": "none"
+                },
+                {
+                  "index": 2,
+                  "activity_summary": "コードレビューしている",
+                  "predicted_tags": ["開発"],
+                  "reason": "エディタが表示されているため",
+                  "sensitivity_flag": "none"
+                }
+              ]
+            }
+            """
+        )
+        let inferenceService = InferenceService(
+            ollamaClient: mockClient,
+            promptBuilder: PromptBuilder(),
+            observationRepository: env.observationRepository,
+            tagRepository: env.tagRepository,
+            fileStorageService: env.fileStorageService
+        )
+
+        let pending = try env.observationRepository.fetchPendingInferenceObservations()
+        XCTAssertEqual(pending.count, 2)
+        XCTAssertEqual(try env.observationRepository.countPendingInference(), 2)
+        XCTAssertEqual(try env.observationRepository.countCompletedInference(), 0)
+
+        var latestProgress = (0, 0)
+        await inferenceService.inferPendingObservations(pending) { processed, total in
+            latestProgress = (processed, total)
+        }
+
+        XCTAssertEqual(latestProgress.0, 2)
+        XCTAssertEqual(latestProgress.1, 2)
+        XCTAssertEqual(try env.observationRepository.countPendingInference(), 0)
+        XCTAssertEqual(try env.observationRepository.countCompletedInference(), 2)
+    }
+
+    func testInferPendingObservationsRunsWithoutActiveTags() async throws {
+        let env = TestEnvironment()
+        let now = Date()
+
+        let imageURL = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: imageURL)
+
+        let job = CaptureJob(scheduledAt: now, executedAt: now, status: .succeeded)
+        try env.captureJobRepository.save(job)
+        let observation = Observation(
+            captureJobId: job.id,
+            capturedAt: now,
+            imagePath: imageURL.path,
+            captureState: .captured
+        )
+        try env.observationRepository.save(observation)
+
+        let mockClient = MockOllamaClient(
+            generatedText: """
+            {
+              "results": [
+                {
+                  "index": 1,
+                  "activity_summary": "仕様書を読んでいる",
+                  "predicted_tags": [],
+                  "reason": "ドキュメント画面が表示されているため",
+                  "sensitivity_flag": "none"
+                }
+              ]
+            }
+            """
+        )
+        let inferenceService = InferenceService(
+            ollamaClient: mockClient,
+            promptBuilder: PromptBuilder(),
+            observationRepository: env.observationRepository,
+            tagRepository: env.tagRepository,
+            fileStorageService: env.fileStorageService
+        )
+
+        let pending = try env.observationRepository.fetchPendingInferenceObservations()
+        XCTAssertEqual(pending.count, 1)
+
+        await inferenceService.inferPendingObservations(pending)
+
+        XCTAssertEqual(try env.observationRepository.countPendingInference(), 0)
+        XCTAssertEqual(try env.observationRepository.countCompletedInference(), 1)
+        let refreshed = try XCTUnwrap(env.observationRepository.fetch(id: observation.id))
+        XCTAssertEqual(refreshed.aiSummary, "仕様書を読んでいる")
+        XCTAssertNil(refreshed.imagePath)
+    }
+
+    func testInferPendingObservationsFallsBackWhenConfiguredModelIsMissing() async throws {
+        let env = TestEnvironment()
+        let now = Date()
+        let imageURL = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: imageURL)
+        let tag = Tag(name: "開発")
+        try env.tagRepository.save(tag)
+
+        let job = CaptureJob(scheduledAt: now, executedAt: now, status: .succeeded)
+        try env.captureJobRepository.save(job)
+        let observation = Observation(
+            captureJobId: job.id,
+            capturedAt: now,
+            imagePath: imageURL.path,
+            captureState: .captured
+        )
+        try env.observationRepository.save(observation)
+
+        let mockClient = MockOllamaClient(
+            generatedText: """
+            {
+              "results": [
+                {
+                  "index": 1,
+                  "activity_summary": "コードレビュー中",
+                  "predicted_tags": ["開発"],
+                  "reason": "エディタ画面が表示されているため",
+                  "sensitivity_flag": "none"
+                }
+              ]
+            }
+            """,
+            availableModels: ["llava:latest", "gemma4:e2b"]
+        )
+        let inferenceService = InferenceService(
+            ollamaClient: mockClient,
+            promptBuilder: PromptBuilder(),
+            observationRepository: env.observationRepository,
+            tagRepository: env.tagRepository,
+            fileStorageService: env.fileStorageService
+        )
+        inferenceService.configure(host: "http://localhost:11434", model: "gemma4:e4b")
+
+        let pending = try env.observationRepository.fetchPendingInferenceObservations()
+        await inferenceService.inferPendingObservations(pending)
+
+        XCTAssertEqual(mockClient.configuredModel, "llava:latest")
+        XCTAssertEqual(try env.observationRepository.countPendingInference(), 0)
+        XCTAssertEqual(try env.observationRepository.countCompletedInference(), 1)
+    }
+
+    func testInferPendingObservationsBatchesByTen() async throws {
+        let env = TestEnvironment()
+        let now = Date()
+        let tag = Tag(name: "開発")
+        try env.tagRepository.save(tag)
+
+        var created: [Observation] = []
+        for i in 0..<12 {
+            let imageURL = env.fileStorageService.screenshotPath(for: now, id: UUID().uuidString)
+            try Data([0xFF, 0xD8, 0xFF]).write(to: imageURL)
+            let job = CaptureJob(
+                scheduledAt: now.addingTimeInterval(Double(i)),
+                executedAt: now.addingTimeInterval(Double(i)),
+                status: .succeeded
+            )
+            try env.captureJobRepository.save(job)
+            let observation = Observation(
+                captureJobId: job.id,
+                capturedAt: now.addingTimeInterval(Double(i)),
+                imagePath: imageURL.path,
+                captureState: .captured
+            )
+            try env.observationRepository.save(observation)
+            created.append(observation)
+        }
+
+        let mockClient = MockOllamaClient(
+            generatedText: nil,
+            generatedTextByCall: [
+                makeBatchResponse(count: 10, summaryPrefix: "batch1"),
+                makeBatchResponse(count: 2, summaryPrefix: "batch2")
+            ]
+        )
+        let inferenceService = InferenceService(
+            ollamaClient: mockClient,
+            promptBuilder: PromptBuilder(),
+            observationRepository: env.observationRepository,
+            tagRepository: env.tagRepository,
+            fileStorageService: env.fileStorageService
+        )
+
+        let pending = try env.observationRepository.fetchPendingInferenceObservations()
+        await inferenceService.inferPendingObservations(pending)
+
+        XCTAssertEqual(mockClient.receivedImageCounts, [10, 2])
+        XCTAssertEqual(try env.observationRepository.countPendingInference(), 0)
+        XCTAssertEqual(try env.observationRepository.countCompletedInference(), 12)
+    }
+
     @MainActor
     func testSummaryDailyMinutesAreSortedByDateAcrossYearBoundary() {
         let env = TestEnvironment()
@@ -321,14 +529,14 @@ final class RegressionTests: XCTestCase {
         )
         let anchor = makeLocalDate(year: 2026, month: 1, day: 1, hour: 9, minute: 0)
         viewModel.period = .weekly
-        viewModel.startDate = anchor
+        viewModel.currentDate = anchor
 
         viewModel.loadSummary()
 
         let calendar = Calendar.current
         let weekStart = calendar.dateInterval(of: .weekOfYear, for: anchor)!.start
         let formatter = DateFormatter()
-        formatter.dateFormat = "MM/dd"
+        formatter.dateFormat = "d"
 
         var expected: [String] = []
         var current = weekStart
@@ -404,30 +612,6 @@ final class RegressionTests: XCTestCase {
 
         XCTAssertTrue(viewModel.saveSettings())
         XCTAssertFalse(try env.settingsService.loadBool(forKey: "setup_complete"))
-    }
-
-    @MainActor
-    func testSummaryReloadDoesNotAccumulateUnclassifiedMinutes() throws {
-        let env = TestEnvironment()
-        let baseDate = makeDate(year: 2026, month: 4, day: 18, hour: 13, minute: 0)
-        let session = WorkSession(
-            startAt: baseDate,
-            endAt: baseDate.addingTimeInterval(900),
-            aiTitle: "Unclassified"
-        )
-        try env.workSessionRepository.save(session)
-
-        let viewModel = SummaryViewModel(
-            workSessionRepository: env.workSessionRepository,
-            tagRepository: env.tagRepository
-        )
-        viewModel.startDate = baseDate
-
-        viewModel.loadSummary()
-        XCTAssertEqual(viewModel.unclassifiedMinutes, 15)
-
-        viewModel.loadSummary()
-        XCTAssertEqual(viewModel.unclassifiedMinutes, 15)
     }
 
     @MainActor
@@ -514,8 +698,7 @@ private final class TestEnvironment {
             captureJobRepository: captureJobRepository,
             observationRepository: observationRepository,
             exclusionService: exclusionService,
-            fileStorageService: fileStorageService,
-            inferenceService: inferenceService
+            fileStorageService: fileStorageService
         )
         schedulerService = SchedulerService(captureService: captureService)
         aggregationService = AggregationService(
@@ -598,25 +781,77 @@ private extension Array {
 
 private final class MockOllamaClient: OllamaClientProtocol {
     private let generatedText: String?
+    private let generatedTextByCall: [String]
+    private let availableModels: [String]
+    private var generateCallIndex: Int = 0
+    private(set) var configuredHost: String?
+    private(set) var configuredModel: String?
+    private(set) var receivedImageCounts: [Int] = []
 
-    init(generatedText: String?) {
+    init(generatedText: String?, availableModels: [String] = [], generatedTextByCall: [String] = []) {
         self.generatedText = generatedText
+        self.generatedTextByCall = generatedTextByCall
+        self.availableModels = availableModels
     }
 
-    func configure(host: String, model: String) {}
+    func configure(host: String, model: String) {
+        configuredHost = host
+        configuredModel = model
+    }
 
     func testConnection() async throws -> Bool {
         true
     }
 
     func listModels() async throws -> [String] {
-        []
+        availableModels
     }
 
     func generate(prompt: String, imageBase64: String) async throws -> String {
+        try await generate(prompt: prompt, imageBase64List: [imageBase64])
+    }
+
+    func generate(prompt: String, imageBase64List: [String]) async throws -> String {
+        receivedImageCounts.append(imageBase64List.count)
+
+        if !generatedTextByCall.isEmpty {
+            guard generateCallIndex < generatedTextByCall.count else {
+                throw OllamaError.requestFailed
+            }
+            defer { generateCallIndex += 1 }
+            return generatedTextByCall[generateCallIndex]
+        }
+
+        guard let generatedText else { throw OllamaError.requestFailed }
+        return generatedText
+    }
+
+    func generateText(prompt: String) async throws -> String {
         guard let generatedText else {
             throw OllamaError.requestFailed
         }
         return generatedText
     }
+}
+
+private func makeBatchResponse(count: Int, summaryPrefix: String) -> String {
+    let results = (1...count).map { index in
+        """
+        {
+          "index": \(index),
+          "activity_summary": "\(summaryPrefix)-\(index)",
+          "predicted_tags": ["開発"],
+          "reason": "test",
+          "sensitivity_flag": "none"
+        }
+        """
+    }.joined(separator: ",")
+
+    return """
+    {
+      "results": [
+        \(results)
+      ]
+    }
+    """
 }

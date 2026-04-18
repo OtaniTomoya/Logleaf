@@ -10,18 +10,18 @@ public struct SettingsView: View {
 
     public var body: some View {
         Form {
+            Section("タグ管理") {
+                TagManagementView(
+                    viewModel: TagManagementViewModel(tagService: appState.tagService)
+                )
+            }
+
             Section("キャプチャ設定") {
                 Picker("キャプチャ間隔", selection: $viewModel.captureIntervalSeconds) {
                     Text("30秒").tag(30)
                     Text("1分").tag(60)
                     Text("2分").tag(120)
                     Text("5分").tag(300)
-                }
-
-                Picker("チェックポイント間隔", selection: $viewModel.checkpointIntervalMinutes) {
-                    Text("5分").tag(5)
-                    Text("10分").tag(10)
-                    Text("15分").tag(15)
                 }
             }
 
@@ -47,18 +47,6 @@ public struct SettingsView: View {
                     Label("接続済み", systemImage: "checkmark.circle.fill")
                         .foregroundColor(.green)
                 }
-            }
-
-            Section("保存設定") {
-                Picker("保存期間", selection: $viewModel.retentionDays) {
-                    Text("7日").tag(7)
-                    Text("14日").tag(14)
-                    Text("30日").tag(30)
-                    Text("60日").tag(60)
-                    Text("90日").tag(90)
-                }
-
-                Toggle("自動削除", isOn: $viewModel.autoDeleteEnabled)
             }
 
             Section {

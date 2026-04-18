@@ -19,7 +19,6 @@ public struct Observation: Codable, Identifiable, FetchableRecord, PersistableRe
     public var rawVlmOutputJson: String?
     public var aiSummary: String?
     public var aiReason: String?
-    public var aiConfidence: Double?
     public var sensitivityFlag: SensitivityFlag?
     public var isUserHidden: Bool
     public var createdAt: Date
@@ -52,7 +51,7 @@ public struct Observation: Codable, Identifiable, FetchableRecord, PersistableRe
          frontmostWindowTitle: String? = nil, displayId: String? = nil,
          captureState: CaptureState = .captured,
          rawVlmOutputJson: String? = nil, aiSummary: String? = nil,
-         aiReason: String? = nil, aiConfidence: Double? = nil,
+         aiReason: String? = nil,
          sensitivityFlag: SensitivityFlag? = nil,
          isUserHidden: Bool = false, createdAt: Date = Date()) {
         self.id = id
@@ -70,7 +69,6 @@ public struct Observation: Codable, Identifiable, FetchableRecord, PersistableRe
         self.rawVlmOutputJson = rawVlmOutputJson
         self.aiSummary = aiSummary
         self.aiReason = aiReason
-        self.aiConfidence = aiConfidence
         self.sensitivityFlag = sensitivityFlag
         self.isUserHidden = isUserHidden
         self.createdAt = createdAt

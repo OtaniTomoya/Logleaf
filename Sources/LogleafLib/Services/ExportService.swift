@@ -24,7 +24,7 @@ public final class ExportService: @unchecked Sendable {
         let allTags = try tagRepository.fetchAll()
         let tagMap = Dictionary(uniqueKeysWithValues: allTags.map { ($0.id, $0.name) })
 
-        var csv = "開始時刻,終了時刻,タイトル,タグ,信頼度,ステータス,時間(分)\n"
+        var csv = "開始時刻,終了時刻,タイトル,タグ,ステータス,時間(分)\n"
         for session in sessions {
             let tags = try workSessionRepository.fetchTags(sessionId: session.id)
             let tagNames = tags.compactMap { tagMap[$0.tagId] }.joined(separator: "; ")
@@ -34,7 +34,7 @@ public final class ExportService: @unchecked Sendable {
             let startStr = formatter.string(from: session.startAt)
             let endStr = formatter.string(from: session.endAt)
 
-            csv += "\(startStr),\(endStr),\(title),\(tagNames),\(session.aiConfidence ?? 0),\(session.status.rawValue),\(session.durationMinutes)\n"
+            csv += "\(startStr),\(endStr),\(title),\(tagNames),\(session.status.rawValue),\(session.durationMinutes)\n"
         }
 
         let url = fileStorageService.exportFilePath(
@@ -69,17 +69,16 @@ public final class ExportService: @unchecked Sendable {
 
         for date in grouped.keys.sorted() {
             md += "## \(date)\n\n"
-            md += "| 時間 | タイトル | タグ | 信頼度 |\n"
-            md += "|------|---------|------|--------|\n"
+            md += "| 時間 | タイトル | タグ |\n"
+            md += "|------|---------|------|\n"
 
             for session in grouped[date]! {
                 let tags = try workSessionRepository.fetchTags(sessionId: session.id)
                 let tagNames = tags.compactMap { tagMap[$0.tagId] }.joined(separator: ", ")
                 let start = timeFormatter.string(from: session.startAt)
                 let end = timeFormatter.string(from: session.endAt)
-                let confidence = session.aiConfidence.map { String(format: "%.0f%%", $0 * 100) } ?? "-"
 
-                md += "| \(start)-\(end) | \(session.displayTitle) | \(tagNames) | \(confidence) |\n"
+                md += "| \(start)-\(end) | \(session.displayTitle) | \(tagNames) |\n"
             }
             md += "\n"
         }
@@ -115,7 +114,6 @@ public final class ExportService: @unchecked Sendable {
                 "end_at": formatter.string(from: session.endAt),
                 "title": session.displayTitle,
                 "tags": tagNames,
-                "confidence": session.aiConfidence ?? 0,
                 "status": session.status.rawValue,
                 "duration_minutes": session.durationMinutes,
                 "note": session.finalNote ?? ""

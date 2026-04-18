@@ -5,13 +5,14 @@ public final class TagManagementViewModel: ObservableObject {
     @Published public var tags: [Tag] = []
     @Published public var newTagName: String = ""
     @Published public var newTagColor: String = "#4A90D9"
-    @Published public var editingTag: Tag?
+    @Published public var selectedTagId: String?
     @Published public var errorMessage: String?
 
     private let tagService: TagService
 
     public init(tagService: TagService) {
         self.tagService = tagService
+        self.newTagColor = tagService.suggestNextColor()
     }
 
     public func loadTags() {
@@ -24,11 +25,13 @@ public final class TagManagementViewModel: ObservableObject {
 
     public func addTag() {
         let name = newTagName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
+        let tagName = name.isEmpty ? generateDefaultName() : name
         do {
-            _ = try tagService.createTag(name: name, colorHex: newTagColor)
+            let tag = try tagService.createTag(name: tagName, colorHex: newTagColor)
             newTagName = ""
+            newTagColor = tagService.suggestNextColor()
             loadTags()
+            selectedTagId = tag.id
         } catch {
             errorMessage = "タグの追加に失敗しました"
         }
@@ -36,16 +39,21 @@ public final class TagManagementViewModel: ObservableObject {
 
     public func updateTag(_ tag: Tag) {
         do {
-            try tagService.updateTag(
-                id: tag.id,
-                name: tag.name,
-                colorHex: tag.colorHex,
-                priority: tag.priority,
-                isActive: tag.isActive
-            )
+            try tagService.saveTag(tag)
             loadTags()
         } catch {
             errorMessage = "タグの更新に失敗しました"
+        }
+    }
+
+    public func deleteSelectedTag() {
+        guard let id = selectedTagId else { return }
+        do {
+            try tagService.deleteTag(id: id)
+            selectedTagId = nil
+            loadTags()
+        } catch {
+            errorMessage = "タグの削除に失敗しました"
         }
     }
 
@@ -72,5 +80,14 @@ public final class TagManagementViewModel: ObservableObject {
         } catch {
             errorMessage = "タグの統合に失敗しました"
         }
+    }
+
+    private func generateDefaultName() -> String {
+        let base = "新しいタグ"
+        let existingNames = Set(tags.map(\.name))
+        if !existingNames.contains(base) { return base }
+        var i = 2
+        while existingNames.contains("\(base) \(i)") { i += 1 }
+        return "\(base) \(i)"
     }
 }

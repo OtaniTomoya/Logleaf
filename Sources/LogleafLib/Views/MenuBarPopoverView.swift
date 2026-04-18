@@ -4,6 +4,7 @@ import AppKit
 public struct MenuBarPopoverView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openWindow) private var openWindow
+    private let refreshTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     public init() {}
 
@@ -36,12 +37,24 @@ public struct MenuBarPopoverView: View {
                     }
                 }
 
-                if appState.unconfirmedCount > 0 {
+                HStack {
+                    Image(systemName: "photo.on.rectangle.angled")
+                    Text("未推論: \(appState.pendingInferenceCount)枚")
+                }
+                .foregroundColor(appState.pendingInferenceCount > 0 ? .orange : .secondary)
+
+                HStack {
+                    Image(systemName: "checkmark.seal")
+                    Text("推論完了: \(appState.completedInferenceCount)枚")
+                }
+                .foregroundColor(.secondary)
+
+                if appState.captureStatus == .inferring {
                     HStack {
-                        Image(systemName: "exclamationmark.circle")
-                        Text("未確認: \(appState.unconfirmedCount)件")
+                        Image(systemName: "brain")
+                        Text("推論中: \(appState.currentInferenceProcessedCount)/\(appState.currentInferenceTotalCount)")
                     }
-                    .foregroundColor(.orange)
+                    .foregroundColor(.blue)
                 }
 
                 if let next = appState.nextCaptureDate {
@@ -72,6 +85,13 @@ public struct MenuBarPopoverView: View {
             }
             .disabled(!appState.isSetupComplete)
 
+            Button(action: {
+                Task { await appState.runPendingInference() }
+            }) {
+                Label("溜まった画像を推論", systemImage: "brain")
+            }
+            .disabled(!appState.isSetupComplete || appState.pendingInferenceCount == 0 || appState.captureStatus == .inferring)
+
             Divider()
 
             Button(action: openMainWindow) {
@@ -91,6 +111,9 @@ public struct MenuBarPopoverView: View {
         .padding()
         .frame(width: 280)
         .onAppear {
+            refreshStats()
+        }
+        .onReceive(refreshTimer) { _ in
             refreshStats()
         }
     }
@@ -116,8 +139,8 @@ public struct MenuBarPopoverView: View {
 
     private func refreshStats() {
         appState.todayRecordedMinutes = (try? appState.workSessionRepository.totalMinutesForDate(Date())) ?? 0
-        appState.unconfirmedCount = (try? appState.workSessionRepository.countUnconfirmed()) ?? 0
         appState.nextCaptureDate = appState.schedulerService.nextFireDate
+        appState.refreshInferenceQueueStats()
     }
 
     private func openMainWindow() {
@@ -127,8 +150,8 @@ public struct MenuBarPopoverView: View {
     }
 
     private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        appState.shouldOpenSettings = true
+        openMainWindow()
     }
 
     private func activateAndFocusMainWindow(after delay: TimeInterval) {

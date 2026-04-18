@@ -11,7 +11,6 @@ public struct WorkSession: Codable, Identifiable, FetchableRecord, PersistableRe
     public var finalTitle: String?
     public var aiSummary: String?
     public var finalNote: String?
-    public var aiConfidence: Double?
     public var status: Status
     public var representativeImagePath: String?
     public var createdAt: Date
@@ -42,7 +41,7 @@ public struct WorkSession: Codable, Identifiable, FetchableRecord, PersistableRe
     public init(id: String = UUID().uuidString, startAt: Date, endAt: Date,
          aiTitle: String? = nil, finalTitle: String? = nil,
          aiSummary: String? = nil, finalNote: String? = nil,
-         aiConfidence: Double? = nil, status: Status = .confirmed,
+         status: Status = .confirmed,
          representativeImagePath: String? = nil,
          createdAt: Date = Date(), updatedAt: Date = Date()) {
         self.id = id
@@ -52,7 +51,6 @@ public struct WorkSession: Codable, Identifiable, FetchableRecord, PersistableRe
         self.finalTitle = finalTitle
         self.aiSummary = aiSummary
         self.finalNote = finalNote
-        self.aiConfidence = aiConfidence
         self.status = status
         self.representativeImagePath = representativeImagePath
         self.createdAt = createdAt

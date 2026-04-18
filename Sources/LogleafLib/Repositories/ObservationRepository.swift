@@ -79,7 +79,6 @@ public final class ObservationRepository {
                 obs.rawVlmOutputJson = result.rawJson
                 obs.aiSummary = result.activitySummary
                 obs.aiReason = result.reason
-                obs.aiConfidence = result.confidence
                 obs.sensitivityFlag = Observation.SensitivityFlag(rawValue: result.sensitivityFlag)
                 try obs.update(db)
             }
@@ -104,6 +103,70 @@ public final class ObservationRepository {
             try Observation
                 .filter(Observation.Columns.capturedAt >= start && Observation.Columns.capturedAt < end)
                 .fetchCount(db)
+        }
+    }
+
+    public func fetchPendingInferenceObservations(limit: Int? = nil) throws -> [Observation] {
+        try databaseManager.reader.read { db in
+            var request = Observation
+                .filter(
+                    Observation.Columns.captureState == Observation.CaptureState.captured.rawValue
+                    && Column("imagePath") != nil
+                )
+                .order(Observation.Columns.capturedAt.asc)
+
+            if let limit, limit > 0 {
+                request = request.limit(limit)
+            }
+
+            return try request.fetchAll(db)
+        }
+    }
+
+    public func countPendingInference() throws -> Int {
+        try databaseManager.reader.read { db in
+            try Observation
+                .filter(
+                    Observation.Columns.captureState == Observation.CaptureState.captured.rawValue
+                    && Column("imagePath") != nil
+                )
+                .fetchCount(db)
+        }
+    }
+
+    public func countCompletedInference() throws -> Int {
+        try databaseManager.reader.read { db in
+            try Observation
+                .filter(
+                    Observation.Columns.captureState == Observation.CaptureState.captured.rawValue
+                    && Column("aiSummary") != nil
+                )
+                .fetchCount(db)
+        }
+    }
+
+    public func fetchRecentInferred(before: Date, withinSeconds: Int) throws -> [(observation: Observation, tagNames: [String])] {
+        let cutoff = before.addingTimeInterval(-Double(withinSeconds))
+        return try databaseManager.reader.read { db in
+            let observations = try Observation
+                .filter(
+                    Observation.Columns.capturedAt >= cutoff
+                    && Observation.Columns.capturedAt < before
+                    && Column("aiSummary") != nil
+                )
+                .order(Observation.Columns.capturedAt.asc)
+                .fetchAll(db)
+
+            return try observations.map { obs in
+                let obsTags = try ObservationTag
+                    .filter(Column("observationId") == obs.id)
+                    .fetchAll(db)
+                let tagIds = obsTags.map { $0.tagId }
+                let tagNames: [String] = try tagIds.compactMap { tagId in
+                    try Tag.fetchOne(db, key: tagId)?.name
+                }
+                return (observation: obs, tagNames: tagNames)
+            }
         }
     }
 

@@ -27,12 +27,5 @@ struct LogleafApp: App {
                 .environmentObject(appState)
         }
 
-        Settings {
-            SettingsView(viewModel: SettingsViewModel(
-                settingsService: appState.settingsService,
-                inferenceService: appState.inferenceService
-            ))
-                .environmentObject(appState)
-        }
     }
 }

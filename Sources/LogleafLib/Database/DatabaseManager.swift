@@ -218,6 +218,48 @@ public final class DatabaseManager {
             )
         }
 
+        migrator.registerMigration("v2_tag_description") { db in
+            // Add description column
+            try db.alter(table: "tags") { t in
+                t.add(column: "description", .text)
+            }
+            // Remove priority column by recreating the table
+            // SQLite doesn't support DROP COLUMN before 3.35.0
+            // Use rename + recreate approach
+            try db.rename(table: "tags", to: "tags_old")
+            try db.create(table: "tags") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull().unique()
+                t.column("colorHex", .text)
+                t.column("description", .text)
+                t.column("isActive", .boolean).notNull().defaults(to: true)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.execute(sql: """
+                INSERT INTO tags (id, name, colorHex, description, isActive, createdAt, updatedAt)
+                SELECT id, name, colorHex, description, isActive, createdAt, updatedAt FROM tags_old
+            """)
+            try db.drop(table: "tags_old")
+        }
+
+        migrator.registerMigration("v3_daily_feedbacks") { db in
+            try db.create(table: "daily_feedbacks", ifNotExists: true) { t in
+                t.column("id", .text).primaryKey()
+                t.column("date", .datetime).notNull()
+                t.column("aiFeedback", .text).notNull()
+                t.column("editedFeedback", .text)
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.create(
+                index: "idx_daily_feedbacks_date",
+                on: "daily_feedbacks",
+                columns: ["date"],
+                ifNotExists: true
+            )
+        }
+
         try migrator.migrate(dbPool)
     }
 }

@@ -19,7 +19,7 @@ public struct AppSettings {
     public var captureIntervalSeconds: Int = 60
     public var checkpointIntervalMinutes: Int = 5
     public var ollamaHost: String = "http://localhost:11434"
-    public var ollamaModel: String = "gemma4:e4b"
+    public var ollamaModel: String = "gemma4:e2b"
     public var retentionDays: Int = 30
     public var autoDeleteEnabled: Bool = true
     public var logLevel: LogLevel = .info
@@ -79,7 +79,8 @@ public struct InferenceInput {
     public var promptVersion: String = "v1"
 
     public init(imageURL: URL, frontmostApp: String? = nil, frontmostWindowTitle: String? = nil,
-                allowedTags: [Tag], locale: String = "ja", promptVersion: String = "v1") {
+                allowedTags: [Tag],
+                locale: String = "ja", promptVersion: String = "v1") {
         self.imageURL = imageURL
         self.frontmostApp = frontmostApp
         self.frontmostWindowTitle = frontmostWindowTitle
@@ -92,7 +93,6 @@ public struct InferenceInput {
 public struct InferenceResult: Codable {
     public var activitySummary: String
     public var predictedTags: [String]
-    public var confidence: Double
     public var reason: String
     public var sensitivityFlag: String
     public var rawJson: String
@@ -100,17 +100,15 @@ public struct InferenceResult: Codable {
     enum CodingKeys: String, CodingKey {
         case activitySummary = "activity_summary"
         case predictedTags = "predicted_tags"
-        case confidence
         case reason
         case sensitivityFlag = "sensitivity_flag"
         case rawJson
     }
 
-    public init(activitySummary: String, predictedTags: [String], confidence: Double,
+    public init(activitySummary: String, predictedTags: [String],
                 reason: String, sensitivityFlag: String, rawJson: String) {
         self.activitySummary = activitySummary
         self.predictedTags = predictedTags
-        self.confidence = confidence
         self.reason = reason
         self.sensitivityFlag = sensitivityFlag
         self.rawJson = rawJson
