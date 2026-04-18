@@ -21,6 +21,7 @@ public final class DailyFeedbackRepository {
         return try databaseManager.reader.read { db in
             try DailyFeedback
                 .filter(Column("date") >= start && Column("date") < end)
+                .order(Column("updatedAt").desc, Column("createdAt").desc)
                 .fetchOne(db)
         }
     }

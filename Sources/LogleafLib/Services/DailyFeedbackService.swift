@@ -53,15 +53,26 @@ public final class DailyFeedbackService {
         )
 
         let prompt = promptBuilder.buildFeedbackPrompt(input: input)
-        let responseText = try await ollamaClient.generateText(prompt: prompt)
-
-        let feedback = DailyFeedback(
-            date: Calendar.current.startOfDay(for: date),
-            aiFeedback: responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedDate = Calendar.current.startOfDay(for: date)
+        let normalizedFeedback = try await resolveFeedbackText(
+            prompt: prompt,
+            dateString: input.dateString,
+            sessionInputs: sessionInputs
         )
-        try dailyFeedbackRepository.save(feedback)
 
-        return feedback
+        if var existing = try dailyFeedbackRepository.fetchForDate(normalizedDate) {
+            existing.aiFeedback = normalizedFeedback
+            existing.editedFeedback = nil
+            try dailyFeedbackRepository.update(existing)
+            return try dailyFeedbackRepository.fetchForDate(normalizedDate) ?? existing
+        } else {
+            let feedback = DailyFeedback(
+                date: normalizedDate,
+                aiFeedback: normalizedFeedback
+            )
+            try dailyFeedbackRepository.save(feedback)
+            return feedback
+        }
     }
 
     public func fetchExisting(for date: Date) throws -> DailyFeedback? {
@@ -71,9 +82,95 @@ public final class DailyFeedbackService {
     public func updateFeedback(_ feedback: DailyFeedback) throws {
         try dailyFeedbackRepository.update(feedback)
     }
+
+    private func generateFeedbackTextWithFallback(prompt: String) async throws -> String {
+        do {
+            return try await ollamaClient.generateText(prompt: prompt)
+        } catch OllamaError.modelNotFound {
+            let availableModels = try await ollamaClient.listModels()
+            guard let fallbackModel = selectFallbackTextModel(from: availableModels) else {
+                throw OllamaError.modelNotFound
+            }
+            ollamaClient.configure(host: ollamaClient.configuredHost, model: fallbackModel)
+            AppLogger.warning("Daily feedback switched to fallback model: \(fallbackModel)")
+            return try await ollamaClient.generateText(prompt: prompt)
+        }
+    }
+
+    private func selectFallbackTextModel(from models: [String]) -> String? {
+        guard !models.isEmpty else { return nil }
+
+        let rankedKeywords = ["gemma", "qwen", "llama", "mistral", "phi", "llava"]
+        for keyword in rankedKeywords {
+            if let matched = models.first(where: { $0.lowercased().contains(keyword) }) {
+                return matched
+            }
+        }
+        return models[0]
+    }
+
+    private func resolveFeedbackText(
+        prompt: String,
+        dateString: String,
+        sessionInputs: [(title: String, tags: [String], startTime: String, endTime: String, durationMinutes: Int)]
+    ) async throws -> String {
+        let firstText = try await generateFeedbackTextWithFallback(prompt: prompt)
+        let firstNormalized = normalizeFeedbackText(firstText)
+        if !firstNormalized.isEmpty {
+            return firstNormalized
+        }
+
+        AppLogger.warning("Daily feedback response was empty. Retrying with strict non-empty instruction.")
+        let retryPrompt = prompt + "\n\n重要: 出力は必ず日本語で1文字以上にしてください。空文字は禁止です。"
+        let retryText = try await generateFeedbackTextWithFallback(prompt: retryPrompt)
+        let retryNormalized = normalizeFeedbackText(retryText)
+        if !retryNormalized.isEmpty {
+            return retryNormalized
+        }
+
+        AppLogger.warning("Daily feedback response remained empty. Using local fallback summary.")
+        return buildLocalFallbackFeedback(dateString: dateString, sessions: sessionInputs)
+    }
+
+    private func normalizeFeedbackText(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func buildLocalFallbackFeedback(
+        dateString: String,
+        sessions: [(title: String, tags: [String], startTime: String, endTime: String, durationMinutes: Int)]
+    ) -> String {
+        let totalMinutes = sessions.reduce(0) { $0 + $1.durationMinutes }
+        let totalHours = totalMinutes / 60
+        let remainMinutes = totalMinutes % 60
+        let totalText = totalHours > 0 ? "\(totalHours)時間\(remainMinutes)分" : "\(remainMinutes)分"
+
+        var seenTitles = Set<String>()
+        var orderedTitles: [String] = []
+        for title in sessions.map(\.title).filter({ !$0.isEmpty }) {
+            if seenTitles.insert(title).inserted {
+                orderedTitles.append(title)
+            }
+        }
+        let topTitles = orderedTitles.prefix(3)
+        let titleText = topTitles.isEmpty ? "複数の作業" : topTitles.joined(separator: "、")
+
+        let tagCounts = Dictionary(grouping: sessions.flatMap(\.tags), by: { $0 })
+            .mapValues(\.count)
+        let topTags = tagCounts
+            .sorted { lhs, rhs in
+                if lhs.value == rhs.value { return lhs.key < rhs.key }
+                return lhs.value > rhs.value
+            }
+            .prefix(2)
+            .map(\.key)
+        let tagText = topTags.isEmpty ? "タグなし" : topTags.joined(separator: "、")
+
+        return "\(dateString)の作業ログを集計しました。合計\(totalText)で、主な内容は\(titleText)です。記録タグは\(tagText)が中心でした。"
+    }
 }
 
-public enum FeedbackError: Error, LocalizedError {
+public enum FeedbackError: Error, LocalizedError, Equatable {
     case noSessions
 
     public var errorDescription: String? {

@@ -17,10 +17,6 @@ public final class FileStorageService {
         appSupportURL.appendingPathComponent("screenshots")
     }
 
-    public var exportsURL: URL {
-        appSupportURL.appendingPathComponent("exports")
-    }
-
     public var logsURL: URL {
         appSupportURL.appendingPathComponent("logs")
     }
@@ -36,7 +32,7 @@ public final class FileStorageService {
     }
 
     private func createDirectories() {
-        let dirs = [appSupportURL, screenshotsBaseURL, exportsURL, logsURL]
+        let dirs = [appSupportURL, screenshotsBaseURL, logsURL]
         for dir in dirs {
             try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         }
@@ -64,20 +60,6 @@ public final class FileStorageService {
 
     public func representativeImagePath(sessionId: String) -> URL {
         screenshotsBaseURL.appendingPathComponent("rep_\(sessionId).jpg")
-    }
-
-    public func exportFilePath(startDate: Date, endDate: Date, format: ExportRecord.ExportFormat) -> URL {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd"
-        let start = formatter.string(from: startDate)
-        let end = formatter.string(from: endDate)
-        let ext: String
-        switch format {
-        case .csv: ext = "csv"
-        case .markdown: ext = "md"
-        case .json: ext = "json"
-        }
-        return exportsURL.appendingPathComponent("worklog_\(start)_\(end).\(ext)")
     }
 
     public func deleteFile(at url: URL) throws {

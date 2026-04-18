@@ -19,11 +19,10 @@ public struct AppSettings {
     public var captureIntervalSeconds: Int = 60
     public var checkpointIntervalMinutes: Int = 5
     public var ollamaHost: String = "http://localhost:11434"
-    public var ollamaModel: String = "gemma4:e2b"
+    public var ollamaModel: String = "gemma4:e4b"
     public var retentionDays: Int = 30
     public var autoDeleteEnabled: Bool = true
     public var logLevel: LogLevel = .info
-    public var exportDirectory: String = ""
 
     public enum LogLevel: String, Codable {
         case debug

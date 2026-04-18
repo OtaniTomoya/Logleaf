@@ -13,7 +13,6 @@ public struct AuditLog: Codable, Identifiable, FetchableRecord, PersistableRecor
     public enum EventType: String, Codable {
         case capture
         case inference
-        case export_ = "export"
         case settings
     }
 

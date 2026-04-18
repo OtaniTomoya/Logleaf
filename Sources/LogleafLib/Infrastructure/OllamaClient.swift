@@ -1,6 +1,8 @@
 import Foundation
 
 public protocol OllamaClientProtocol: AnyObject {
+    var configuredHost: String { get }
+    var configuredModel: String { get }
     func configure(host: String, model: String)
     func testConnection() async throws -> Bool
     func listModels() async throws -> [String]
@@ -14,8 +16,8 @@ public final class OllamaClient {
     private var baseURL: String = "http://localhost:11434"
     private var model: String = "gemma4:e4b"
 
-    var configuredHost: String { baseURL }
-    var configuredModel: String { model }
+    public var configuredHost: String { baseURL }
+    public var configuredModel: String { model }
 
     public init() {}
 
@@ -81,7 +83,7 @@ public final class OllamaClient {
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
-            throw OllamaError.requestFailed
+            throw classifyRequestError(from: data)
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -110,6 +112,23 @@ public final class OllamaClient {
             throw OllamaError.connectionFailed
         }
         return url
+    }
+
+    private func classifyRequestError(from data: Data) -> OllamaError {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let errorMessage = (json["error"] as? String)?.lowercased(),
+           errorMessage.contains("model"),
+           errorMessage.contains("not found") {
+            return .modelNotFound
+        }
+
+        if let rawText = String(data: data, encoding: .utf8)?.lowercased(),
+           rawText.contains("model"),
+           rawText.contains("not found") {
+            return .modelNotFound
+        }
+
+        return .requestFailed
     }
 }
 

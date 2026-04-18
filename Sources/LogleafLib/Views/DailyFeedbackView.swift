@@ -66,6 +66,7 @@ public struct DailyFeedbackView: View {
                         .foregroundColor(.secondary)
                 }
             } else if let feedback = viewModel.feedback {
+                let trimmedFeedback = feedback.displayFeedback.trimmingCharacters(in: .whitespacesAndNewlines)
                 if viewModel.isEditing {
                     TextEditor(text: $viewModel.editedText)
                         .font(.body)
@@ -74,8 +75,13 @@ public struct DailyFeedbackView: View {
                         .padding(8)
                         .background(Color(nsColor: .textBackgroundColor))
                         .cornerRadius(6)
+                } else if trimmedFeedback.isEmpty {
+                    Text("フィードバックが空です。再生成してください。")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    Text(feedback.displayFeedback)
+                    Text(trimmedFeedback)
                         .font(.body)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)

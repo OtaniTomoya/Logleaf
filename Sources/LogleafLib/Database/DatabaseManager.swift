@@ -162,14 +162,6 @@ public final class DatabaseManager {
                 t.primaryKey(["workSessionId", "observationId"])
             }
 
-            try db.create(table: "exports", ifNotExists: true) { t in
-                t.column("id", .text).primaryKey()
-                t.column("format", .text).notNull()
-                t.column("targetPath", .text).notNull()
-                t.column("requestedAt", .datetime).notNull()
-                t.column("filterJson", .text)
-            }
-
             try db.create(table: "audit_logs", ifNotExists: true) { t in
                 t.column("id", .text).primaryKey()
                 t.column("eventType", .text).notNull()
@@ -223,24 +215,6 @@ public final class DatabaseManager {
             try db.alter(table: "tags") { t in
                 t.add(column: "description", .text)
             }
-            // Remove priority column by recreating the table
-            // SQLite doesn't support DROP COLUMN before 3.35.0
-            // Use rename + recreate approach
-            try db.rename(table: "tags", to: "tags_old")
-            try db.create(table: "tags") { t in
-                t.column("id", .text).primaryKey()
-                t.column("name", .text).notNull().unique()
-                t.column("colorHex", .text)
-                t.column("description", .text)
-                t.column("isActive", .boolean).notNull().defaults(to: true)
-                t.column("createdAt", .datetime).notNull()
-                t.column("updatedAt", .datetime).notNull()
-            }
-            try db.execute(sql: """
-                INSERT INTO tags (id, name, colorHex, description, isActive, createdAt, updatedAt)
-                SELECT id, name, colorHex, description, isActive, createdAt, updatedAt FROM tags_old
-            """)
-            try db.drop(table: "tags_old")
         }
 
         migrator.registerMigration("v3_daily_feedbacks") { db in
@@ -258,6 +232,96 @@ public final class DatabaseManager {
                 columns: ["date"],
                 ifNotExists: true
             )
+        }
+
+        migrator.registerMigration("v4_repair_tag_foreign_keys") { db in
+            func referencesBrokenTagsOld(_ tableName: String) throws -> Bool {
+                let rows = try Row.fetchAll(db, sql: "PRAGMA foreign_key_list(\(tableName.quotedDatabaseIdentifier))")
+                return rows.contains { row in
+                    (row["table"] as String?) == "tags_old"
+                }
+            }
+
+            if try referencesBrokenTagsOld("tag_aliases") {
+                try db.rename(table: "tag_aliases", to: "tag_aliases_old_fk")
+                try db.create(table: "tag_aliases") { t in
+                    t.column("id", .text).primaryKey()
+                    t.column("tagId", .text).notNull()
+                        .references("tags", onDelete: .cascade)
+                    t.column("alias", .text).notNull()
+                    t.column("createdAt", .datetime).notNull()
+                }
+                try db.execute(sql: """
+                    INSERT INTO tag_aliases (id, tagId, alias, createdAt)
+                    SELECT id, tagId, alias, createdAt FROM tag_aliases_old_fk
+                """)
+                try db.drop(table: "tag_aliases_old_fk")
+            }
+
+            if try referencesBrokenTagsOld("observation_tags") {
+                try db.rename(table: "observation_tags", to: "observation_tags_old_fk")
+                try db.create(table: "observation_tags") { t in
+                    t.column("observationId", .text).notNull()
+                        .references("observations", onDelete: .cascade)
+                    t.column("tagId", .text).notNull()
+                        .references("tags", onDelete: .cascade)
+                    t.column("score", .double).notNull()
+                    t.column("source", .text).notNull()
+                    t.primaryKey(["observationId", "tagId", "source"])
+                }
+                try db.execute(sql: """
+                    INSERT INTO observation_tags (observationId, tagId, score, source)
+                    SELECT observationId, tagId, score, source FROM observation_tags_old_fk
+                """)
+                try db.drop(table: "observation_tags_old_fk")
+                try db.create(
+                    index: "idx_observation_tags_tag",
+                    on: "observation_tags",
+                    columns: ["tagId"],
+                    ifNotExists: true
+                )
+            }
+
+            if try referencesBrokenTagsOld("checkpoint_tags") {
+                try db.rename(table: "checkpoint_tags", to: "checkpoint_tags_old_fk")
+                try db.create(table: "checkpoint_tags") { t in
+                    t.column("checkpointId", .text).notNull()
+                        .references("checkpoints", onDelete: .cascade)
+                    t.column("tagId", .text).notNull()
+                        .references("tags", onDelete: .cascade)
+                    t.column("score", .double).notNull()
+                    t.column("source", .text).notNull()
+                    t.primaryKey(["checkpointId", "tagId", "source"])
+                }
+                try db.execute(sql: """
+                    INSERT INTO checkpoint_tags (checkpointId, tagId, score, source)
+                    SELECT checkpointId, tagId, score, source FROM checkpoint_tags_old_fk
+                """)
+                try db.drop(table: "checkpoint_tags_old_fk")
+            }
+
+            if try referencesBrokenTagsOld("work_session_tags") {
+                try db.rename(table: "work_session_tags", to: "work_session_tags_old_fk")
+                try db.create(table: "work_session_tags") { t in
+                    t.column("workSessionId", .text).notNull()
+                        .references("work_sessions", onDelete: .cascade)
+                    t.column("tagId", .text).notNull()
+                        .references("tags", onDelete: .cascade)
+                    t.column("source", .text).notNull()
+                    t.primaryKey(["workSessionId", "tagId", "source"])
+                }
+                try db.execute(sql: """
+                    INSERT INTO work_session_tags (workSessionId, tagId, source)
+                    SELECT workSessionId, tagId, source FROM work_session_tags_old_fk
+                """)
+                try db.drop(table: "work_session_tags_old_fk")
+                try db.create(
+                    index: "idx_work_session_tags_tag",
+                    on: "work_session_tags",
+                    columns: ["tagId"],
+                    ifNotExists: true
+                )
+            }
         }
 
         try migrator.migrate(dbPool)

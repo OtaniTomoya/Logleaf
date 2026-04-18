@@ -27,7 +27,6 @@ public final class AppState: ObservableObject {
     public let observationRepository: ObservationRepository
     public let checkpointRepository: CheckpointRepository
     public let workSessionRepository: WorkSessionRepository
-    public let exportRepository: ExportRepository
     public let auditLogRepository: AuditLogRepository
 
     public let fileStorageService: FileStorageService
@@ -37,7 +36,6 @@ public final class AppState: ObservableObject {
     public let inferenceService: InferenceService
     public let aggregationService: AggregationService
     public let tagService: TagService
-    public let exportService: ExportService
     public let settingsService: SettingsService
     public let schedulerService: SchedulerService
     public let dailyFeedbackService: DailyFeedbackService
@@ -67,8 +65,6 @@ public final class AppState: ObservableObject {
         self.checkpointRepository = checkpointRepo
         let workSessionRepo = WorkSessionRepository(databaseManager: dbManager)
         self.workSessionRepository = workSessionRepo
-        let exportRepo = ExportRepository(databaseManager: dbManager)
-        self.exportRepository = exportRepo
         let auditLogRepo = AuditLogRepository(databaseManager: dbManager)
         self.auditLogRepository = auditLogRepo
 
@@ -97,14 +93,6 @@ public final class AppState: ObservableObject {
             observationRepository: observationRepo,
             checkpointRepository: checkpointRepo,
             workSessionRepository: workSessionRepo,
-            fileStorageService: fileStorage
-        )
-
-        self.exportService = ExportService(
-            workSessionRepository: workSessionRepo,
-            observationRepository: observationRepo,
-            tagRepository: tagRepo,
-            exportRepository: exportRepo,
             fileStorageService: fileStorage
         )
 
@@ -195,8 +183,12 @@ public final class AppState: ObservableObject {
         }
         // 推論完了後にセッションを自動再構築
         do {
-            try aggregationService.buildCheckpoints(for: Date())
-            _ = try aggregationService.buildSessions(for: Date())
+            let calendar = Calendar.current
+            let affectedDates = Set(pendingObservations.map { calendar.startOfDay(for: $0.capturedAt) })
+            for day in affectedDates.sorted() {
+                try aggregationService.buildCheckpoints(for: day)
+                _ = try aggregationService.buildSessions(for: day)
+            }
         } catch {
             AppLogger.error("Failed to rebuild sessions after inference: \(error)")
         }

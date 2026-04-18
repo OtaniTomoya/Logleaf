@@ -137,60 +137,6 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(after.endAt, t2)
     }
 
-    func testExportExcludesUnclassifiedWhenFlagIsDisabled() throws {
-        let env = TestEnvironment()
-        let date = makeDate(year: 2026, month: 4, day: 18, hour: 11, minute: 0)
-        let tag = Tag(name: "開発")
-        try env.tagRepository.save(tag)
-
-        let taggedSession = WorkSession(startAt: date, endAt: date.addingTimeInterval(300), aiTitle: "Tagged")
-        let unclassifiedSession = WorkSession(startAt: date.addingTimeInterval(600), endAt: date.addingTimeInterval(900), aiTitle: "Unclassified")
-        try env.workSessionRepository.save(taggedSession)
-        try env.workSessionRepository.save(unclassifiedSession)
-        try env.workSessionRepository.saveTags([
-            WorkSessionTag(workSessionId: taggedSession.id, tagId: tag.id, source: .ai),
-        ])
-
-        let url = try env.exportService.exportJSON(
-            filter: ExportFilter(
-                startDate: date.addingTimeInterval(-60),
-                endDate: date.addingTimeInterval(1200),
-                includeUnclassified: false
-            )
-        )
-
-        XCTAssertEqual(try loadExportedSessionIDs(from: url), [taggedSession.id])
-    }
-
-    func testExportCanKeepUnclassifiedAlongsideTagFilter() throws {
-        let env = TestEnvironment()
-        let date = makeDate(year: 2026, month: 4, day: 18, hour: 12, minute: 0)
-        let tag = Tag(name: "開発")
-        try env.tagRepository.save(tag)
-
-        let taggedSession = WorkSession(startAt: date, endAt: date.addingTimeInterval(300), aiTitle: "Tagged")
-        let unclassifiedSession = WorkSession(startAt: date.addingTimeInterval(600), endAt: date.addingTimeInterval(900), aiTitle: "Unclassified")
-        try env.workSessionRepository.save(taggedSession)
-        try env.workSessionRepository.save(unclassifiedSession)
-        try env.workSessionRepository.saveTags([
-            WorkSessionTag(workSessionId: taggedSession.id, tagId: tag.id, source: .ai),
-        ])
-
-        let url = try env.exportService.exportJSON(
-            filter: ExportFilter(
-                startDate: date.addingTimeInterval(-60),
-                endDate: date.addingTimeInterval(1200),
-                tagIds: [tag.id],
-                includeUnclassified: true
-            )
-        )
-
-        XCTAssertEqual(
-            Set(try loadExportedSessionIDs(from: url)),
-            Set([taggedSession.id, unclassifiedSession.id])
-        )
-    }
-
     func testLoadSettingsKeepsDefaultAutoDeleteEnabledWhenNotSaved() throws {
         let env = TestEnvironment()
 
@@ -520,6 +466,126 @@ final class RegressionTests: XCTestCase {
         XCTAssertEqual(try env.observationRepository.countCompletedInference(), 12)
     }
 
+    func testDailyFeedbackGenerateUpdatesSameDayRecordInsteadOfDuplicating() async throws {
+        let env = TestEnvironment()
+        let targetDate = makeDate(year: 2026, month: 4, day: 18, hour: 10, minute: 0)
+        let session = WorkSession(
+            startAt: targetDate,
+            endAt: targetDate.addingTimeInterval(900),
+            aiTitle: "集中作業"
+        )
+        try env.workSessionRepository.save(session)
+
+        let service = DailyFeedbackService(
+            ollamaClient: MockOllamaClient(generatedText: "要約テキスト"),
+            promptBuilder: PromptBuilder(),
+            workSessionRepository: env.workSessionRepository,
+            tagRepository: env.tagRepository,
+            dailyFeedbackRepository: DailyFeedbackRepository(databaseManager: env.databaseManager)
+        )
+
+        let first = try await service.generateFeedback(for: targetDate)
+        var edited = first
+        edited.editedFeedback = "手動編集"
+        try service.updateFeedback(edited)
+
+        let second = try await service.generateFeedback(for: targetDate)
+        XCTAssertEqual(second.id, first.id)
+        XCTAssertNil(second.editedFeedback)
+
+        let fetched = try XCTUnwrap(service.fetchExisting(for: targetDate))
+        XCTAssertEqual(fetched.id, first.id)
+        XCTAssertEqual(fetched.aiFeedback, "要約テキスト")
+        XCTAssertNil(fetched.editedFeedback)
+    }
+
+    func testDailyFeedbackFallsBackWhenConfiguredModelIsMissing() async throws {
+        let env = TestEnvironment()
+        let targetDate = makeDate(year: 2026, month: 4, day: 18, hour: 10, minute: 0)
+        let session = WorkSession(
+            startAt: targetDate,
+            endAt: targetDate.addingTimeInterval(900),
+            aiTitle: "集中作業"
+        )
+        try env.workSessionRepository.save(session)
+
+        let mockClient = MockOllamaClient(
+            generatedText: "フォールバック後の要約",
+            availableModels: ["gemma4:e2b", "llava:latest"],
+            generateTextErrorsByCall: [OllamaError.modelNotFound]
+        )
+        mockClient.configure(host: "http://localhost:11434", model: "gemma4:e4b")
+
+        let service = DailyFeedbackService(
+            ollamaClient: mockClient,
+            promptBuilder: PromptBuilder(),
+            workSessionRepository: env.workSessionRepository,
+            tagRepository: env.tagRepository,
+            dailyFeedbackRepository: DailyFeedbackRepository(databaseManager: env.databaseManager)
+        )
+
+        let result = try await service.generateFeedback(for: targetDate)
+        XCTAssertEqual(result.aiFeedback, "フォールバック後の要約")
+        XCTAssertEqual(mockClient.configuredModel, "gemma4:e2b")
+    }
+
+    func testDailyFeedbackGenerateUsesLocalFallbackWhenResponseIsEmpty() async throws {
+        let env = TestEnvironment()
+        let targetDate = makeDate(year: 2026, month: 4, day: 18, hour: 10, minute: 0)
+        let session = WorkSession(
+            startAt: targetDate,
+            endAt: targetDate.addingTimeInterval(900),
+            aiTitle: "集中作業"
+        )
+        try env.workSessionRepository.save(session)
+
+        let service = DailyFeedbackService(
+            ollamaClient: MockOllamaClient(generatedText: "   "),
+            promptBuilder: PromptBuilder(),
+            workSessionRepository: env.workSessionRepository,
+            tagRepository: env.tagRepository,
+            dailyFeedbackRepository: DailyFeedbackRepository(databaseManager: env.databaseManager)
+        )
+
+        let result = try await service.generateFeedback(for: targetDate)
+        XCTAssertFalse(result.aiFeedback.isEmpty)
+        XCTAssertTrue(result.aiFeedback.contains("合計"))
+        XCTAssertTrue(result.aiFeedback.contains("集中作業"))
+
+        let fetched = try XCTUnwrap(service.fetchExisting(for: targetDate))
+        XCTAssertEqual(fetched.id, result.id)
+        XCTAssertEqual(fetched.aiFeedback, result.aiFeedback)
+    }
+
+    func testDailyFeedbackGenerateOverwritesExistingWithFallbackWhenResponseIsEmpty() async throws {
+        let env = TestEnvironment()
+        let targetDate = makeDate(year: 2026, month: 4, day: 18, hour: 10, minute: 0)
+        let session = WorkSession(
+            startAt: targetDate,
+            endAt: targetDate.addingTimeInterval(900),
+            aiTitle: "集中作業"
+        )
+        try env.workSessionRepository.save(session)
+
+        let repo = DailyFeedbackRepository(databaseManager: env.databaseManager)
+        try repo.save(DailyFeedback(date: Calendar.current.startOfDay(for: targetDate), aiFeedback: "既存の内容"))
+
+        let service = DailyFeedbackService(
+            ollamaClient: MockOllamaClient(generatedText: "\n\n"),
+            promptBuilder: PromptBuilder(),
+            workSessionRepository: env.workSessionRepository,
+            tagRepository: env.tagRepository,
+            dailyFeedbackRepository: repo
+        )
+
+        let result = try await service.generateFeedback(for: targetDate)
+        XCTAssertFalse(result.aiFeedback.isEmpty)
+        XCTAssertNotEqual(result.aiFeedback, "既存の内容")
+
+        let existing = try XCTUnwrap(service.fetchExisting(for: targetDate))
+        XCTAssertEqual(existing.aiFeedback, result.aiFeedback)
+    }
+
     @MainActor
     func testSummaryDailyMinutesAreSortedByDateAcrossYearBoundary() {
         let env = TestEnvironment()
@@ -614,43 +680,6 @@ final class RegressionTests: XCTestCase {
         XCTAssertFalse(try env.settingsService.loadBool(forKey: "setup_complete"))
     }
 
-    @MainActor
-    func testExportViewModelNormalizesDateOnlyRangeToWholeDays() async throws {
-        let env = TestEnvironment()
-        let firstDay = makeLocalDate(year: 2026, month: 4, day: 11, hour: 9, minute: 0)
-        let lastDay = makeLocalDate(year: 2026, month: 4, day: 18, hour: 20, minute: 0)
-
-        let firstSession = WorkSession(
-            startAt: firstDay,
-            endAt: firstDay.addingTimeInterval(300),
-            aiTitle: "Start boundary"
-        )
-        let lastSession = WorkSession(
-            startAt: lastDay,
-            endAt: lastDay.addingTimeInterval(300),
-            aiTitle: "End boundary"
-        )
-        try env.workSessionRepository.save(firstSession)
-        try env.workSessionRepository.save(lastSession)
-
-        let viewModel = ExportViewModel(
-            exportService: env.exportService,
-            tagRepository: env.tagRepository
-        )
-        viewModel.selectedFormat = .json
-        viewModel.startDate = makeLocalDate(year: 2026, month: 4, day: 11, hour: 15, minute: 30)
-        viewModel.endDate = makeLocalDate(year: 2026, month: 4, day: 18, hour: 15, minute: 30)
-
-        viewModel.export()
-        await waitForExportCompletion(viewModel)
-        XCTAssertFalse(viewModel.isExporting)
-
-        let exportedURL = try XCTUnwrap(viewModel.exportedURL)
-        XCTAssertEqual(
-            Set(try loadExportedSessionIDs(from: exportedURL)),
-            Set([firstSession.id, lastSession.id])
-        )
-    }
 }
 
 private final class TestEnvironment {
@@ -665,13 +694,11 @@ private final class TestEnvironment {
     let observationRepository: ObservationRepository
     let checkpointRepository: CheckpointRepository
     let workSessionRepository: WorkSessionRepository
-    let exportRepository: ExportRepository
     let exclusionService: ExclusionService
     let inferenceService: InferenceService
     let captureService: CaptureService
     let schedulerService: SchedulerService
     let aggregationService: AggregationService
-    let exportService: ExportService
 
     init() {
         rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("LogleafTests-\(UUID().uuidString)")
@@ -685,7 +712,6 @@ private final class TestEnvironment {
         observationRepository = ObservationRepository(databaseManager: databaseManager)
         checkpointRepository = CheckpointRepository(databaseManager: databaseManager)
         workSessionRepository = WorkSessionRepository(databaseManager: databaseManager)
-        exportRepository = ExportRepository(databaseManager: databaseManager)
         exclusionService = ExclusionService(repository: exclusionRuleRepository)
         inferenceService = InferenceService(
             ollamaClient: OllamaClient(),
@@ -705,13 +731,6 @@ private final class TestEnvironment {
             observationRepository: observationRepository,
             checkpointRepository: checkpointRepository,
             workSessionRepository: workSessionRepository,
-            fileStorageService: fileStorageService
-        )
-        exportService = ExportService(
-            workSessionRepository: workSessionRepository,
-            observationRepository: observationRepository,
-            tagRepository: tagRepository,
-            exportRepository: exportRepository,
             fileStorageService: fileStorageService
         )
     }
@@ -758,21 +777,6 @@ private func makeLocalDate(year: Int, month: Int, day: Int, hour: Int, minute: I
     return components.date ?? Date(timeIntervalSince1970: 0)
 }
 
-private func loadExportedSessionIDs(from url: URL) throws -> [String] {
-    let data = try Data(contentsOf: url)
-    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-    let sessions = json?["sessions"] as? [[String: Any]] ?? []
-    return sessions.compactMap { $0["id"] as? String }
-}
-
-@MainActor
-private func waitForExportCompletion(_ viewModel: ExportViewModel, timeout: TimeInterval = 3.0) async {
-    let deadline = Date().addingTimeInterval(timeout)
-    while viewModel.isExporting && Date() < deadline {
-        try? await Task.sleep(nanoseconds: 20_000_000)
-    }
-}
-
 private extension Array {
     var onlyElement: Element? {
         count == 1 ? first : nil
@@ -782,16 +786,24 @@ private extension Array {
 private final class MockOllamaClient: OllamaClientProtocol {
     private let generatedText: String?
     private let generatedTextByCall: [String]
+    private let generateTextErrorsByCall: [Error]
     private let availableModels: [String]
     private var generateCallIndex: Int = 0
-    private(set) var configuredHost: String?
-    private(set) var configuredModel: String?
+    private var generateTextCallIndex: Int = 0
+    private(set) var configuredHost: String = "http://localhost:11434"
+    private(set) var configuredModel: String = "gemma4:e4b"
     private(set) var receivedImageCounts: [Int] = []
 
-    init(generatedText: String?, availableModels: [String] = [], generatedTextByCall: [String] = []) {
+    init(
+        generatedText: String?,
+        availableModels: [String] = [],
+        generatedTextByCall: [String] = [],
+        generateTextErrorsByCall: [Error] = []
+    ) {
         self.generatedText = generatedText
         self.generatedTextByCall = generatedTextByCall
         self.availableModels = availableModels
+        self.generateTextErrorsByCall = generateTextErrorsByCall
     }
 
     func configure(host: String, model: String) {
@@ -827,6 +839,10 @@ private final class MockOllamaClient: OllamaClientProtocol {
     }
 
     func generateText(prompt: String) async throws -> String {
+        if generateTextCallIndex < generateTextErrorsByCall.count {
+            defer { generateTextCallIndex += 1 }
+            throw generateTextErrorsByCall[generateTextCallIndex]
+        }
         guard let generatedText else {
             throw OllamaError.requestFailed
         }

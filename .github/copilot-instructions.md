@@ -44,7 +44,7 @@
   - `Infrastructure/`: Logger, FileStorage, OllamaClient, PromptBuilder
   - `Models/`: ドメインモデル
   - `Repositories/`: GRDBアクセス
-  - `Services/`: Capture/Scheduler/Inference/Aggregation/Export など
+  - `Services/`: Capture/Scheduler/Inference/Aggregation など
   - `ViewModels/`: 画面状態と操作
   - `Views/`: SwiftUI画面
 - `Tests/LogleafTests/`: 単体テスト

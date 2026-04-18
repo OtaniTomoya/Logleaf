@@ -3,6 +3,11 @@ import XCTest
 
 final class LogleafTests: XCTestCase {
 
+    func testAppSettingsDefaultOllamaModel() {
+        let settings = AppSettings()
+        XCTAssertEqual(settings.ollamaModel, "gemma4:e4b")
+    }
+
     // MARK: - Tag Tests
 
     func testTagCreation() {
@@ -205,16 +210,6 @@ final class LogleafTests: XCTestCase {
         XCTAssertEqual(job.status, .queued)
         job.status = .succeeded
         XCTAssertEqual(job.status, .succeeded)
-    }
-
-    // MARK: - ExportFilter Tests
-
-    func testExportFilterDefaults() {
-        let filter = ExportFilter()
-        XCTAssertNil(filter.startDate)
-        XCTAssertNil(filter.endDate)
-        XCTAssertTrue(filter.includeUnclassified)
-        XCTAssertFalse(filter.includeScreenshots)
     }
 
     // MARK: - OllamaClient Tests
