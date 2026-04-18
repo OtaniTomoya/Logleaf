@@ -111,9 +111,11 @@ public final class SummaryViewModel: ObservableObject {
                 if dayStart >= calStart && dayStart < calEnd {
                     dayMap[dayStart, default: 0] += session.durationMinutes
                     if !wsTags.isEmpty {
-                        let perTag = session.durationMinutes / max(wsTags.count, 1)
-                        for wsTag in wsTags {
-                            dayTagMinutes[dayStart, default: [:]][wsTag.tagId, default: 0] += perTag
+                        let perTag = session.durationMinutes / wsTags.count
+                        let remainder = session.durationMinutes % wsTags.count
+                        for (i, wsTag) in wsTags.enumerated() {
+                            let extra = i < remainder ? 1 : 0
+                            dayTagMinutes[dayStart, default: [:]][wsTag.tagId, default: 0] += perTag + extra
                         }
                     }
                 }
@@ -130,9 +132,11 @@ public final class SummaryViewModel: ObservableObject {
             for session in periodSessions {
                 let wsTags = sessionTagCache[session.id] ?? []
                 if !wsTags.isEmpty {
-                    let perTag = session.durationMinutes / max(wsTags.count, 1)
-                    for wsTag in wsTags {
-                        periodTagMinutes[wsTag.tagId, default: 0] += perTag
+                    let perTag = session.durationMinutes / wsTags.count
+                    let remainder = session.durationMinutes % wsTags.count
+                    for (i, wsTag) in wsTags.enumerated() {
+                        let extra = i < remainder ? 1 : 0
+                        periodTagMinutes[wsTag.tagId, default: 0] += perTag + extra
                     }
                 }
             }

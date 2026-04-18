@@ -198,14 +198,17 @@ public final class AppState: ObservableObject {
                 self?.refreshInferenceQueueStats()
             }
         }
-        // 推論完了後にセッションを自動再構築
+        // 推論完了後にセッションを自動再構築（UIブロック回避のためバックグラウンドで実行）
+        let calendar = Calendar.current
+        let affectedDates = Set(pendingObservations.map { calendar.startOfDay(for: $0.capturedAt) }).sorted()
+        let aggregationService = self.aggregationService
         do {
-            let calendar = Calendar.current
-            let affectedDates = Set(pendingObservations.map { calendar.startOfDay(for: $0.capturedAt) })
-            for day in affectedDates.sorted() {
-                try aggregationService.buildCheckpoints(for: day)
-                _ = try aggregationService.buildSessions(for: day)
-            }
+            try await Task.detached(priority: .utility) {
+                for day in affectedDates {
+                    try aggregationService.buildCheckpoints(for: day)
+                    _ = try aggregationService.buildSessions(for: day)
+                }
+            }.value
         } catch {
             AppLogger.error("Failed to rebuild sessions after inference: \(error)")
         }
@@ -222,9 +225,34 @@ public final class AppState: ObservableObject {
 
     public func cleanupOldInferredScreenshots() {
         let cutoff = Date().addingTimeInterval(-inferredScreenshotRetention)
+        let observationRepository = self.observationRepository
+        let fileStorageService = self.fileStorageService
+        Task.detached(priority: .utility) {
+            do {
+                let targets = try observationRepository.fetchInferredWithImage(olderThan: cutoff)
+                guard !targets.isEmpty else { return }
+                for observation in targets {
+                    guard let imagePath = observation.imagePath else { continue }
+                    do {
+                        try fileStorageService.deleteFile(at: URL(fileURLWithPath: imagePath))
+                    } catch {
+                        AppLogger.warning("Failed to delete old screenshot for \(observation.id): \(error)")
+                    }
+                    try observationRepository.clearImageReference(observationId: observation.id)
+                }
+                AppLogger.info("Cleaned up \(targets.count) old inferred screenshots")
+            } catch {
+                AppLogger.error("Failed to cleanup old inferred screenshots: \(error)")
+            }
+        }
+    }
+
+    @discardableResult
+    public func cleanupOldInferredScreenshotsSync() -> Bool {
+        let cutoff = Date().addingTimeInterval(-inferredScreenshotRetention)
         do {
             let targets = try observationRepository.fetchInferredWithImage(olderThan: cutoff)
-            guard !targets.isEmpty else { return }
+            guard !targets.isEmpty else { return true }
             for observation in targets {
                 guard let imagePath = observation.imagePath else { continue }
                 do {
@@ -234,8 +262,10 @@ public final class AppState: ObservableObject {
                 }
                 try observationRepository.clearImageReference(observationId: observation.id)
             }
+            return true
         } catch {
             AppLogger.error("Failed to cleanup old inferred screenshots: \(error)")
+            return false
         }
     }
 

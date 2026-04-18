@@ -128,6 +128,7 @@ private struct TagDetailEditor: View {
     @State private var editDescription: String = ""
     @State private var editColor: Color = .blue
     @State private var editIsActive: Bool = true
+    @State private var saveTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -137,10 +138,7 @@ private struct TagDetailEditor: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 240)
                         .onSubmit { saveChanges() }
-                        .onChange(of: editName) {
-                            guard editName != tag.name else { return }
-                            saveChanges()
-                        }
+                        .onChange(of: editName) { debouncedSave() }
                 }
 
                 // Description
@@ -149,10 +147,7 @@ private struct TagDetailEditor: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 240)
                         .onSubmit { saveChanges() }
-                        .onChange(of: editDescription) {
-                            guard editDescription != (tag.tagDescription ?? "") else { return }
-                            saveChanges()
-                        }
+                        .onChange(of: editDescription) { debouncedSave() }
                 }
 
                 // Color
@@ -179,6 +174,15 @@ private struct TagDetailEditor: View {
         editDescription = tag.tagDescription ?? ""
         editColor = Color(hex: tag.colorHex ?? "#4A90D9")
         editIsActive = tag.isActive
+    }
+
+    private func debouncedSave() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            saveChanges()
+        }
     }
 
     private func saveChanges() {

@@ -60,7 +60,7 @@ final class RegressionTests: XCTestCase {
         recentObservation.aiSummary = "recent inferred"
         try env.observationRepository.save(recentObservation)
 
-        appState.cleanupOldInferredScreenshots()
+        appState.cleanupOldInferredScreenshotsSync()
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldImageURL.path))
         let refreshedOld = try XCTUnwrap(env.observationRepository.fetch(id: oldObservation.id))

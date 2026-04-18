@@ -242,20 +242,14 @@ public final class InferenceService {
             return
         }
 
-        defer {
-            stopOllamaServeProcess(process)
-        }
-
         let isReady = await waitForOllamaReady(timeoutSeconds: 20)
-        guard isReady else {
+        if !isReady {
             AppLogger.error("Ollama process started but connection was not established in time")
-            await ensureConfiguredModelAvailable()
-            await operation()
-            return
         }
 
         await ensureConfiguredModelAvailable()
         await operation()
+        await stopOllamaServeProcess(process)
     }
 
     private func ensureConfiguredModelAvailable() async {
@@ -314,12 +308,12 @@ public final class InferenceService {
         }
     }
 
-    private func stopOllamaServeProcess(_ process: Process) {
+    private func stopOllamaServeProcess(_ process: Process) async {
         guard process.isRunning else { return }
         process.terminate()
         let deadline = Date().addingTimeInterval(3)
         while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
         if process.isRunning {
             kill(process.processIdentifier, SIGKILL)
